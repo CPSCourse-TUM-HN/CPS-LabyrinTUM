@@ -7,8 +7,8 @@ camera:
   flip_vertical: false
 
 serial:
-  port: "COM10"
-  baudrate: 115200
+  port: "/dev/cu.usbmodem101"
+  baudrate: 500000
   timeout_s: 0.2
 
 servo:
@@ -17,7 +17,7 @@ servo:
   neutral_us: 1500
   min_us: 1200
   max_us: 1800
-  max_delta_us_per_command: 20
+  max_delta_us_per_command: 500
   watchdog_ms: 500
 
 vision:

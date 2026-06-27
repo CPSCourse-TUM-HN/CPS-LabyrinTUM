@@ -13,6 +13,7 @@ dependencies = [
   "opencv-python>=4.8",
   "pyserial>=3.5",
   "PyYAML>=6.0",
+  "pynput>=1.7",
 ]
 
 [project.optional-dependencies]
