@@ -52,6 +52,45 @@ python scripts/manual_servo_test.py --config configs/default.yaml --neutral
 python scripts/servo_sweep_test.py --config configs/default.yaml --axis yaw --amplitude 0.10
 ```
 
+> Set the serial port for your machine in `configs/default.yaml` (e.g. `COM10`
+> on Windows, `/dev/ttyACM0` on Linux), or pass `--port` to the scripts that
+> support it. Close the Arduino IDE Serial Monitor first — only one program can
+> hold the serial port at a time.
+
+### Manual keyboard control (teleop)
+
+Drive the board tilt live with the arrow keys. Useful for finding safe tilt
+limits and checking axis direction before autonomous runs. Windows only (uses
+`msvcrt`).
+
+```bash
+python scripts/keyboard_teleop.py --limit 0.3
+```
+
+Controls:
+
+| Key | Action |
+| --- | --- |
+| Left / Right | yaw (channel 0) |
+| Up / Down | pitch (channel 1) |
+| Space | return to neutral |
+| `+` / `-` | larger / smaller step per press |
+| `q` / Esc | quit (returns to neutral first) |
+
+Each arrow press nudges the tilt and the script streams the command
+continuously so the board holds position against the firmware's 500 ms
+watchdog.
+
+Useful flags:
+
+- `--limit 0.3` caps the maximum tilt (0–1). **Start low** to avoid stalling a
+  servo into the board's mechanical stops.
+- `--step 0.05` sets the tilt change per key press.
+- `--invert-yaw` / `--invert-pitch` flip a reversed axis direction.
+- `--swap-axes` swaps which arrow pair drives each channel (use if the servo
+  connectors are wired to the opposite channels).
+- `--port COM10` overrides the serial port from the config.
+
 Create an initial board homography from measured correspondences:
 
 ```bash
