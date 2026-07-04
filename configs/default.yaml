@@ -1,13 +1,13 @@
 camera:
   device_index: 0
-  width: 640
-  height: 480
-  fps: 60
+  width: 1280
+  height: 800
+  fps: 120
   flip_horizontal: false
   flip_vertical: false
 
 serial:
-  port: "/dev/cu.usbmodem101"
+  port: "/dev/cu.usbmodem1101"
   baudrate: 500000
   timeout_s: 0.2
 
@@ -25,7 +25,16 @@ vision:
   min_blob_area_px: 25
   max_blob_area_px: 5000
   threshold_value: 220
+  use_otsu: false
+  clahe_clip: 2.0
+  morph_kernel: 5
   blur_kernel: 5
+  # debug overlay for visualizing preprocessing and candidates
+  debug_overlay: false
+  debug_overlay_every_n: 1
+  debug_start_stage: "binary"
+  save_debug: false
+  smoothing_alpha: 0.6
 
 control:
   lookahead_mm: 25.0
