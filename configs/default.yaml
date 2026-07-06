@@ -43,7 +43,7 @@ control:
   max_command: 1.0
 
 maze:
-  width_mm: 3220
-  height_mm: 2820
+  width_mm: 322.0
+  height_mm: 282.0
   path_file: "configs/example_path.csv"
 
