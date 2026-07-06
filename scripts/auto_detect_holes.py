@@ -32,12 +32,31 @@ WINDOW = "auto detect holes"
 SCALE_PX_PER_MM = 2.0
 
 
-def warp_topdown(image: np.ndarray, homography: Homography,
-                 width_mm: float, height_mm: float) -> np.ndarray:
-    scale = np.array([[SCALE_PX_PER_MM, 0, 0], [0, SCALE_PX_PER_MM, 0], [0, 0, 1]])
-    matrix = scale @ homography.image_to_board
-    size = (int(width_mm * SCALE_PX_PER_MM), int(height_mm * SCALE_PX_PER_MM))
-    return cv2.warpPerspective(image, matrix, size)
+def warp_topdown(
+    image: np.ndarray,
+    homography: Homography,
+    max_out_px: int = 1800,
+) -> tuple[np.ndarray, np.ndarray, float]:
+    """Rectify the camera view into board-mm space, auto-fitting the extent.
+
+    Works with any board frame (corner-click or ChArUco, y-up or y-down,
+    offset origins): the output covers wherever the camera image lands in
+    board coordinates. Returns (warped, origin_mm, scale_px_per_mm) where
+    mm = px / scale + origin_mm.
+    """
+    h, w = image.shape[:2]
+    corners = np.array([[0, 0], [w, 0], [w, h], [0, h]], np.float32).reshape(-1, 1, 2)
+    mm = cv2.perspectiveTransform(corners, homography.image_to_board).reshape(-1, 2)
+    x_min, y_min = mm.min(axis=0)
+    x_max, y_max = mm.max(axis=0)
+    span = max(x_max - x_min, y_max - y_min, 1e-6)
+    scale = min(SCALE_PX_PER_MM, max_out_px / span)
+    shift = np.array([[scale, 0, -x_min * scale],
+                      [0, scale, -y_min * scale],
+                      [0, 0, 1]])
+    size = (int((x_max - x_min) * scale) + 1, int((y_max - y_min) * scale) + 1)
+    warped = cv2.warpPerspective(image, shift @ homography.image_to_board, size)
+    return warped, np.array([x_min, y_min], dtype=float), float(scale)
 
 
 def detect_holes(
@@ -45,16 +64,20 @@ def detect_holes(
     threshold: int,
     min_radius_mm: float,
     max_radius_mm: float,
+    origin_mm: np.ndarray | None = None,
+    scale: float = SCALE_PX_PER_MM,
 ) -> tuple[list[tuple[float, float, float]], np.ndarray]:
     """Returns (holes as (x_mm, y_mm, r_mm), binary debug mask)."""
+    if origin_mm is None:
+        origin_mm = np.zeros(2)
     gray = cv2.cvtColor(topdown_bgr, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
     _, mask = cv2.threshold(blurred, threshold, 255, cv2.THRESH_BINARY_INV)
     # close small gaps (e.g. glare inside a hole) without merging walls
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
 
-    min_area = np.pi * (min_radius_mm * SCALE_PX_PER_MM) ** 2
-    max_area = np.pi * (max_radius_mm * SCALE_PX_PER_MM) ** 2
+    min_area = np.pi * (min_radius_mm * scale) ** 2
+    max_area = np.pi * (max_radius_mm * scale) ** 2
 
     holes: list[tuple[float, float, float]] = []
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -69,8 +92,8 @@ def detect_holes(
         if circularity < 0.65:  # walls/bars and line fragments are elongated
             continue
         (x_px, y_px), r_px = cv2.minEnclosingCircle(contour)
-        holes.append((x_px / SCALE_PX_PER_MM, y_px / SCALE_PX_PER_MM,
-                      r_px / SCALE_PX_PER_MM))
+        holes.append((x_px / scale + origin_mm[0], y_px / scale + origin_mm[1],
+                      r_px / scale))
     return holes, mask
 
 
@@ -86,15 +109,15 @@ def main() -> None:
 
     config = load_config(args.config)
     homography = Homography.load(args.homography)
-    width_mm = float(config.maze["width_mm"])
-    height_mm = float(config.maze["height_mm"])
 
     holes: list[tuple[float, float, float]] = []
     manual_added: list[tuple[float, float, float]] = []
     default_r_mm = (args.min_radius_mm + args.max_radius_mm) / 2.0
+    frame_info = {"origin": np.zeros(2), "scale": SCALE_PX_PER_MM}
 
     def on_mouse(event: int, x: int, y: int, *_rest) -> None:
-        x_mm, y_mm = x / SCALE_PX_PER_MM, y / SCALE_PX_PER_MM
+        origin, scale = frame_info["origin"], frame_info["scale"]
+        x_mm, y_mm = x / scale + origin[0], y / scale + origin[1]
         if event == cv2.EVENT_LBUTTONDOWN:
             merged = holes + manual_added
             if not merged:
@@ -116,23 +139,26 @@ def main() -> None:
 
     with CameraCapture(config.camera) as camera:
         frame = camera.read().image
-        topdown = warp_topdown(frame, homography, width_mm, height_mm)
+        topdown, origin, scale = warp_topdown(frame, homography)
+        frame_info["origin"], frame_info["scale"] = origin, scale
         last_threshold = -1
+
+        def mm_to_px(x_mm: float, y_mm: float) -> tuple[int, int]:
+            return (int((x_mm - origin[0]) * scale), int((y_mm - origin[1]) * scale))
 
         while True:
             threshold = cv2.getTrackbarPos("threshold", WINDOW)
             if threshold != last_threshold:
                 holes, mask = detect_holes(topdown, threshold,
-                                           args.min_radius_mm, args.max_radius_mm)
+                                           args.min_radius_mm, args.max_radius_mm,
+                                           origin, scale)
                 last_threshold = threshold
 
             view = topdown.copy()
             for x_mm, y_mm, r_mm in holes:
-                c = (int(x_mm * SCALE_PX_PER_MM), int(y_mm * SCALE_PX_PER_MM))
-                cv2.circle(view, c, int(r_mm * SCALE_PX_PER_MM), (0, 0, 255), 2)
+                cv2.circle(view, mm_to_px(x_mm, y_mm), int(r_mm * scale), (0, 0, 255), 2)
             for x_mm, y_mm, r_mm in manual_added:
-                c = (int(x_mm * SCALE_PX_PER_MM), int(y_mm * SCALE_PX_PER_MM))
-                cv2.circle(view, c, int(r_mm * SCALE_PX_PER_MM), (255, 0, 255), 2)
+                cv2.circle(view, mm_to_px(x_mm, y_mm), int(r_mm * scale), (255, 0, 255), 2)
             count = len(holes) + len(manual_added)
             cv2.putText(view, f"holes: {count}  (auto {len(holes)} + manual "
                         f"{len(manual_added)})  s=save", (10, 25),
@@ -145,7 +171,8 @@ def main() -> None:
                 break
             elif key == ord(" "):
                 frame = camera.read().image
-                topdown = warp_topdown(frame, homography, width_mm, height_mm)
+                topdown, origin, scale = warp_topdown(frame, homography)
+                frame_info["origin"], frame_info["scale"] = origin, scale
                 last_threshold = -1  # force re-detection
                 print("grabbed fresh frame")
             elif key == ord("s"):

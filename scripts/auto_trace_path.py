@@ -44,6 +44,7 @@ def extract_line_mask(
     threshold: int,
     max_line_width_mm: float,
     min_component_mm: float,
+    scale: float = SCALE_PX_PER_MM,
 ) -> np.ndarray:
     """Isolate thin dark structures (the printed line) from walls/holes/text."""
     gray = cv2.cvtColor(topdown_bgr, cv2.COLOR_BGR2GRAY)
@@ -51,7 +52,7 @@ def extract_line_mask(
     _, mask = cv2.threshold(blurred, threshold, 255, cv2.THRESH_BINARY_INV)
 
     # opening with a kernel wider than the line erases it; walls survive
-    k = max(int(max_line_width_mm * SCALE_PX_PER_MM) | 1, 3)
+    k = max(int(max_line_width_mm * scale) | 1, 3)
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
     thick = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
     thin = cv2.bitwise_and(mask, cv2.bitwise_not(cv2.dilate(thick, None)))
@@ -59,7 +60,7 @@ def extract_line_mask(
     # drop small components: printed numbers, specks, wall fringes
     n, labels, stats, _ = cv2.connectedComponentsWithStats(thin)
     keep = np.zeros_like(thin)
-    min_diag_px = min_component_mm * SCALE_PX_PER_MM
+    min_diag_px = min_component_mm * scale
     for i in range(1, n):
         w, h = stats[i, cv2.CC_STAT_WIDTH], stats[i, cv2.CC_STAT_HEIGHT]
         if np.hypot(w, h) >= min_diag_px:
@@ -67,10 +68,17 @@ def extract_line_mask(
     return keep
 
 
-def line_points_mm(line_mask: np.ndarray, grid_mm: float = 1.5) -> np.ndarray:
+def line_points_mm(
+    line_mask: np.ndarray,
+    grid_mm: float = 1.5,
+    origin_mm: np.ndarray | None = None,
+    scale: float = SCALE_PX_PER_MM,
+) -> np.ndarray:
     """Subsample line pixels to a coarse grid of points in mm, shape (N, 2)."""
+    if origin_mm is None:
+        origin_mm = np.zeros(2)
     ys, xs = np.nonzero(line_mask)
-    pts = np.column_stack([xs, ys]) / SCALE_PX_PER_MM
+    pts = np.column_stack([xs, ys]) / scale + origin_mm
     quantized = np.round(pts / grid_mm).astype(int)
     _, idx = np.unique(quantized, axis=0, return_index=True)
     return pts[idx]
@@ -131,9 +139,9 @@ def trace_line(
 def simplify(trace_mm: np.ndarray, epsilon_mm: float = 2.0) -> np.ndarray:
     if len(trace_mm) < 3:
         return trace_mm
-    pts = (trace_mm * SCALE_PX_PER_MM).astype(np.float32).reshape(-1, 1, 2)
-    approx = cv2.approxPolyDP(pts, epsilon_mm * SCALE_PX_PER_MM, False)
-    return approx.reshape(-1, 2) / SCALE_PX_PER_MM
+    pts = trace_mm.astype(np.float32).reshape(-1, 1, 2)
+    approx = cv2.approxPolyDP(pts, epsilon_mm, False)  # units are mm throughout
+    return approx.reshape(-1, 2)
 
 
 def main() -> None:
@@ -152,14 +160,14 @@ def main() -> None:
 
     config = load_config(args.config)
     homography = Homography.load(args.homography)
-    width_mm = float(config.maze["width_mm"])
-    height_mm = float(config.maze["height_mm"])
 
-    state = {"seed": None, "trace": None, "waypoints": None}
+    state = {"seed": None, "trace": None, "waypoints": None,
+             "origin": np.zeros(2), "scale": SCALE_PX_PER_MM}
 
     def on_mouse(event: int, x: int, y: int, *_rest) -> None:
         if event == cv2.EVENT_LBUTTONDOWN:
-            state["seed"] = np.array([x, y], dtype=float) / SCALE_PX_PER_MM
+            state["seed"] = (np.array([x, y], dtype=float) / state["scale"]
+                             + state["origin"])
             state["trace"] = None  # retrace on next loop
 
     cv2.namedWindow(WINDOW)
@@ -169,18 +177,24 @@ def main() -> None:
 
     with CameraCapture(config.camera) as camera:
         frame = camera.read().image
-        topdown = warp_topdown(frame, homography, width_mm, height_mm)
+        topdown, origin, scale = warp_topdown(frame, homography)
+        state["origin"], state["scale"] = origin, scale
         last_threshold = -1
         line_mask = None
         points = None
+
+        def mm_to_px(pt_mm: np.ndarray) -> tuple[int, int]:
+            p = (np.asarray(pt_mm) - origin) * scale
+            return (int(p[0]), int(p[1]))
 
         while True:
             threshold = cv2.getTrackbarPos("threshold", WINDOW)
             if threshold != last_threshold:
                 line_mask = extract_line_mask(
-                    topdown, threshold, args.max_line_width_mm, args.min_component_mm
+                    topdown, threshold, args.max_line_width_mm,
+                    args.min_component_mm, scale
                 )
-                points = line_points_mm(line_mask)
+                points = line_points_mm(line_mask, origin_mm=origin, scale=scale)
                 last_threshold = threshold
                 state["trace"] = None
 
@@ -200,12 +214,9 @@ def main() -> None:
                 n = len(trace)
                 for i in range(n - 1):
                     c = (255 - int(255 * i / n), int(255 * i / n), 0)
-                    p0 = tuple((trace[i] * SCALE_PX_PER_MM).astype(int))
-                    p1 = tuple((trace[i + 1] * SCALE_PX_PER_MM).astype(int))
-                    cv2.line(view, p0, p1, c, 2)
+                    cv2.line(view, mm_to_px(trace[i]), mm_to_px(trace[i + 1]), c, 2)
                 for w in state["waypoints"]:
-                    cv2.circle(view, tuple((w * SCALE_PX_PER_MM).astype(int)),
-                               4, (0, 0, 255), -1)
+                    cv2.circle(view, mm_to_px(w), 4, (0, 0, 255), -1)
             msg = ("click the START of the line" if trace is None
                    else f"waypoints: {len(state['waypoints'])}  s=save  r=reset")
             cv2.putText(view, msg, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7,
@@ -218,7 +229,8 @@ def main() -> None:
                 break
             elif key == ord(" "):
                 frame = camera.read().image
-                topdown = warp_topdown(frame, homography, width_mm, height_mm)
+                topdown, origin, scale = warp_topdown(frame, homography)
+                state["origin"], state["scale"] = origin, scale
                 last_threshold = -1
             elif key == ord("r"):
                 state["seed"] = None
