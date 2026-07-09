@@ -53,6 +53,14 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+# Detection core lives in the package so the live tools (axis_check,
+# run_autonomous) run the exact same tracker; this CLI is the offline wrapper.
+from cps_maze.vision.ball_pipeline import (
+    BallTracker,
+    auto_seed,
+    load_calibration,
+)
+
 # --------------------------------------------------------------------------
 # Board stabilization (ArUco)
 # --------------------------------------------------------------------------
@@ -99,72 +107,6 @@ class BoardRectifier:
         H = cv2.getPerspectiveTransform(src_pts, self.dst_pts)
         warped = cv2.warpPerspective(frame, H, (self.canonical_w, self.canonical_h))
         return warped, H, True
-
-
-# --------------------------------------------------------------------------
-# Ball detection cues
-# --------------------------------------------------------------------------
-
-def motion_candidates(prev_gray, next_gray, min_area=50, max_area=700, min_circularity=0.5):
-    """Frame-to-frame diff blobs matching the ball's size/circularity. The
-    one cue that works while the ball is actually moving."""
-    diff = cv2.GaussianBlur(cv2.absdiff(prev_gray, next_gray), (5, 5), 0)
-    _, mask = cv2.threshold(diff, 14, 255, cv2.THRESH_BINARY)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    out = []
-    for c in contours:
-        area = cv2.contourArea(c)
-        if area < min_area or area > max_area:
-            continue
-        perim = cv2.arcLength(c, True)
-        if perim == 0:
-            continue
-        circularity = 4 * np.pi * area / (perim * perim)
-        if circularity < min_circularity:
-            continue
-        (x, y), r = cv2.minEnclosingCircle(c)
-        out.append((x, y, r))
-    return out
-
-
-def highlight_candidates(gray, thresh=225, min_area=1, max_area=60, ball_r=9):
-    """Per-frame near-saturated blobs. Unlike motion_candidates this works
-    even when the ball is stationary; callers must gate by proximity to a
-    predicted position since it also fires on other shiny objects."""
-    mask = (gray >= thresh).astype(np.uint8)
-    n, _, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
-    out = []
-    for i in range(1, n):
-        area = stats[i, cv2.CC_STAT_AREA]
-        if area < min_area or area > max_area:
-            continue
-        cx, cy = centroids[i]
-        out.append((float(cx), float(cy), float(ball_r)))
-    return out
-
-
-def specular_peak(gray, x, y, r):
-    """Max brightness in a patch -- the ball/hole discriminator (ball ~254,
-    holes/text top out ~150-215)."""
-    h, w = gray.shape
-    x0, x1 = max(0, int(x - r)), min(w, int(x + r) + 1)
-    y0, y1 = max(0, int(y - r)), min(h, int(y + r) + 1)
-    patch = gray[y0:y1, x0:x1]
-    return int(patch.max()) if patch.size else 0
-
-
-def auto_seed(gray, min_specular=225):
-    """Brightest small blob in the frame. Best-effort convenience for a
-    static start position -- unreliable when other bright spots (holes,
-    glare) outshine the ball, so prefer an explicit --seed-x/--seed-y
-    whenever you can pick one by eye."""
-    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-    _, maxval, _, maxloc = cv2.minMaxLoc(blurred)
-    if maxval < min_specular:
-        return None
-    return float(maxloc[0]), float(maxloc[1])
 
 
 # --------------------------------------------------------------------------
@@ -255,106 +197,6 @@ def save_calibration(confusers, roi, path, metadata=None):
     if metadata:
         payload["metadata"] = metadata
     Path(path).write_text(json.dumps(payload, indent=2) + "\n")
-
-
-def load_calibration(path):
-    data = json.loads(Path(path).read_text())
-    return [tuple(c) for c in data["confusers"]], data.get("roi")
-
-
-def in_roi(x, y, roi):
-    """roi is a polygon (list of [x,y]) hugging the playable board surface --
-    anything outside it (desk clutter, screws, cables) is never a candidate,
-    regardless of how bright or how well it moves."""
-    if not roi:
-        return True
-    poly = np.array(roi, dtype=np.float32)
-    return cv2.pointPolygonTest(poly, (float(x), float(y)), False) >= 0
-
-
-# --------------------------------------------------------------------------
-# Streaming-safe tracker
-# --------------------------------------------------------------------------
-
-class BallTracker:
-    """Feed grayscale frames one at a time via update(); works for live
-    streams too -- it never looks ahead."""
-
-    def __init__(self, seed_xy, seed_r=9, max_jump=35, max_search=60,
-                 search_growth=1.15, min_specular=225, max_predict_frames=8,
-                 static_confusers=None, roi=None):
-        self.pos = np.array(seed_xy, dtype=float)
-        self.vel = np.zeros(2)
-        self.r = seed_r
-        self.max_jump = max_jump
-        self.max_search = max_search
-        self.search_growth = search_growth
-        self.min_specular = min_specular
-        self.max_predict_frames = max_predict_frames
-        self.miss_streak = 0
-        self.prev_gray = None
-        # Precomputed once (see compute_static_confusers) and permanently
-        # excluded -- this is what tells "always-bright board feature" apart
-        # from "the ball, currently sitting still", which a purely reactive
-        # stillness check cannot.
-        self.static_confusers = static_confusers or []
-        self.roi = roi
-
-    def _filter_candidates(self, cands):
-        out = []
-        for c in cands:
-            x, y = c[0], c[1]
-            if not in_roi(x, y, self.roi):
-                continue
-            if any(np.hypot(x - sx, y - sy) <= sr for (sx, sy, sr) in self.static_confusers):
-                continue
-            out.append(c)
-        return out
-
-    def update(self, gray):
-        if self.prev_gray is None:
-            self.prev_gray = gray
-            return self.pos[0], self.pos[1], self.r, "seed"
-
-        # union of two independent cues: motion (fast-moving ball) and raw
-        # appearance (stationary/slow ball, where motion diff shows nothing)
-        cands = motion_candidates(self.prev_gray, gray) + highlight_candidates(gray, ball_r=self.r)
-        cands = self._filter_candidates(cands)
-
-        if self.miss_streak <= self.max_predict_frames:
-            search_r = min(self.max_jump * (self.search_growth ** self.miss_streak), self.max_search)
-            predicted = self.pos + self.vel
-            best, best_d = None, None
-            for (x, y, r) in cands:
-                d = np.hypot(x - predicted[0], y - predicted[1])
-                if d > search_r or specular_peak(gray, x, y, r) < self.min_specular:
-                    continue
-                if best_d is None or d < best_d:
-                    best, best_d = (x, y, r), d
-        else:
-            # long lost: reacquire anywhere via strongest specular hotspot
-            best, best_peak = None, -1
-            for (x, y, r) in cands:
-                peak = specular_peak(gray, x, y, r)
-                if peak >= self.min_specular and peak > best_peak:
-                    best, best_peak = (x, y, r), peak
-
-        self.prev_gray = gray
-
-        if best is not None:
-            new_pos = np.array([best[0], best[1]])
-            self.vel = new_pos - self.pos if self.miss_streak == 0 else (new_pos - self.pos) / (self.miss_streak + 1)
-            self.pos = new_pos
-            self.r = 0.7 * self.r + 0.3 * best[2]
-            self.miss_streak = 0
-            return self.pos[0], self.pos[1], self.r, "detected"
-
-        self.miss_streak += 1
-        if self.miss_streak <= self.max_predict_frames:
-            self.pos = self.pos + self.vel  # constant-velocity coast through the gap
-            return self.pos[0], self.pos[1], self.r, "predicted"
-
-        return self.pos[0], self.pos[1], self.r, "lost"
 
 
 # --------------------------------------------------------------------------

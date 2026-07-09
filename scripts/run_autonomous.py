@@ -31,7 +31,7 @@ from cps_maze.control.pid import PathFollower, PathFollowerConfig
 from cps_maze.hardware.serial_link import ArduinoServoLink, ServoCommand
 from cps_maze.logging.run_logger import CsvRunLogger
 from cps_maze.planning.path import WaypointPath
-from cps_maze.vision.ball_tracker import BrightBlobBallTracker
+from cps_maze.vision.ball_pipeline import make_tracker
 from cps_maze.vision.state_estimator import LowPassVelocityEstimator
 
 WINDOW = "autonomous run"
@@ -100,7 +100,7 @@ def main() -> None:
 
     config = load_config(args.config)
     homography = Homography.load(args.homography)
-    tracker = BrightBlobBallTracker(config.vision)
+    tracker = make_tracker(config.vision)
     path_file = Path(args.path) if args.path else config.resolve_path(config.maze["path_file"])
     path = WaypointPath.from_csv(path_file)
     holes = load_holes(Path(args.holes))

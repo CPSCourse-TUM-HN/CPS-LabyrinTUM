@@ -29,6 +29,15 @@ servo:
   watchdog_ms: 500
 
 vision:
+  # Live detector: "pipeline" = motion + specular-highlight tracker (same core
+  # as scripts/pipeline.py, built for holes that look like the ball);
+  # "bright_blob" = original threshold detector.
+  tracker: "pipeline"
+  # Specular gate for the pipeline tracker: ball glints ~254, holes ~150-215.
+  # Lower this if lighting is dim and the ball stops being detected.
+  min_specular: 225
+  # Optional confusers/ROI JSON from `pipeline.py --calibrate`; loaded if present.
+  confusers_file: "calibration/live_confusers.json"
   # Reflective silver is difficult; start with bright-blob detection and tune on real frames.
   min_blob_area_px: 25
   max_blob_area_px: 5000

@@ -28,7 +28,7 @@ from cps_maze.camera import CameraCapture
 from cps_maze.config import load_config
 from cps_maze.control.axis_map import snap_response_to_axis_map
 from cps_maze.hardware.serial_link import ArduinoServoLink, ServoCommand
-from cps_maze.vision.ball_tracker import BrightBlobBallTracker
+from cps_maze.vision.ball_pipeline import make_tracker
 
 WINDOW = "axis check"
 PULSES = [
@@ -41,7 +41,7 @@ PULSES = [
 
 def measure_ball_mm(
     camera: CameraCapture,
-    tracker: BrightBlobBallTracker,
+    tracker,
     homography: Homography,
     samples: int,
     timeout_s: float = 5.0,
@@ -104,7 +104,7 @@ def main() -> None:
 
     config = load_config(args.config)
     homography = Homography.load(args.homography)
-    tracker = BrightBlobBallTracker(config.vision)
+    tracker = make_tracker(config.vision)
     port = args.port or config.serial["port"]
 
     cv2.namedWindow(WINDOW)
