@@ -160,8 +160,38 @@ def main() -> None:
         if link is not None:
             time.sleep(2.0)  # Arduino reset after port open
             link.neutral()
-        try:
+
+        # Arming phase: the run (and the ball-lost timeout) must not start
+        # until the ball is actually acquired and the operator says go.
+        armed = args.no_preview  # headless mode: start immediately as before
+        if not args.no_preview:
+            print("ARMING: click the ball to seed, then SPACE to start (q quits)")
             while True:
+                frame = camera.read()
+                seed = mouse_state.pop("seed", None)
+                if seed is not None and hasattr(tracker, "seed"):
+                    tracker.seed(*seed)
+                detection = tracker.detect(frame.image)
+                ball_px = ((detection.x_px, detection.y_px)
+                           if detection.found else None)
+                status = ("ball locked - SPACE to start" if detection.found
+                          else "CLICK THE BALL to seed")
+                view = draw_overlay(frame.image, homography, path, holes,
+                                    ball_px, None, np.zeros(2), status)
+                cv2.imshow(WINDOW, view)
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord(" ") and detection.found:
+                    armed = True
+                    break
+                if key in (27, ord("q")):
+                    break
+            start_time = monotonic()
+            last_seen = monotonic()
+
+        if not armed:
+            outcome = "aborted before start"
+        try:
+            while armed:
                 if args.max_seconds > 0 and monotonic() - start_time >= args.max_seconds:
                     outcome = "time limit"
                     break
