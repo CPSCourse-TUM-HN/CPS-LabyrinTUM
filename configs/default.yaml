@@ -35,9 +35,25 @@ vision:
   tracker: "pipeline"
   # Specular gate for the pipeline tracker: ball glints ~254, holes ~150-215.
   # Lower this if lighting is dim and the ball stops being detected.
-  min_specular: 240
+  min_specular: 254
   # Optional confusers/ROI JSON from `pipeline.py --calibrate`; loaded if present.
   confusers_file: "calibration/live_confusers.json"
+  # Demo tracking policy: use click-to-seed and reject implausible jumps
+  # instead of auto-locking onto arbitrary bright spots.
+  auto_seed: false
+  auto_reseed: false
+  seed_r: 12
+  report_predicted: false
+  max_jump_px: 35
+  max_search_px: 60
+  search_growth: 1.15
+  max_predict_frames: 2
+  max_velocity_px_per_frame: 35
+  max_single_frame_jump_px: 45
+  allow_global_reacquire: false
+  template_min_score: 0.55
+  template_search_px: 45
+  template_max_correction_px: 30
   # Reflective silver is difficult; start with bright-blob detection and tune on real frames.
   min_blob_area_px: 25
   max_blob_area_px: 5000

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+from ctypes import ArgumentError
 import time
 from pathlib import Path
 from time import monotonic

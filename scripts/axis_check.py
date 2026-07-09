@@ -39,6 +39,10 @@ PULSES = [
 ]
 
 
+class BallMeasurementError(RuntimeError):
+    """Raised when the live tracker cannot provide enough valid samples."""
+
+
 def measure_ball_mm(
     camera: CameraCapture,
     tracker,
@@ -51,7 +55,10 @@ def measure_ball_mm(
     deadline = time.monotonic() + timeout_s
     while len(positions) < samples:
         if time.monotonic() > deadline:
-            raise RuntimeError("ball not detected - check lighting/tracker config")
+            raise BallMeasurementError(
+                f"ball not detected for {timeout_s:.1f}s "
+                f"({len(positions)}/{samples} samples collected)"
+            )
         frame = camera.read()
         det = tracker.detect(frame.image)
         view = tracker.draw_detection(frame.image, det)
@@ -140,6 +147,8 @@ def main() -> None:
                         help="Wait after re-leveling before measuring")
     parser.add_argument("--samples", type=int, default=5,
                         help="Frames averaged per position measurement")
+    parser.add_argument("--measure-timeout-s", type=float, default=5.0,
+                        help="How long to wait for enough detected frames before retrying")
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -179,14 +188,33 @@ def main() -> None:
 
                 link.neutral()
                 time.sleep(args.settle_seconds)
-                p0 = measure_ball_mm(camera, tracker, homography, args.samples)
+                try:
+                    p0 = measure_ball_mm(
+                        camera, tracker, homography, args.samples,
+                        timeout_s=args.measure_timeout_s,
+                    )
+                except BallMeasurementError as exc:
+                    link.neutral()
+                    print(f"[{name}] pre-pulse measurement failed: {exc}")
+                    print("Re-click the ball and retry this same pulse.")
+                    continue
 
                 yaw, pitch = amplitude * direction
                 stream_command(link, float(yaw), float(pitch), args.pulse_seconds,
                                camera, tracker)
                 link.neutral()
                 time.sleep(args.settle_seconds)
-                p1 = measure_ball_mm(camera, tracker, homography, args.samples)
+                try:
+                    p1 = measure_ball_mm(
+                        camera, tracker, homography, args.samples,
+                        timeout_s=args.measure_timeout_s,
+                    )
+                except BallMeasurementError as exc:
+                    link.neutral()
+                    print(f"[{name}] post-pulse measurement failed: {exc}")
+                    print("The board is neutral. Re-center/re-click the ball and "
+                          "retry this same pulse; this attempt was not counted.")
+                    continue
 
                 moved = float(np.linalg.norm(p1 - p0))
                 print(f"[{name}] displacement: dx={p1[0]-p0[0]:+.1f} mm, "

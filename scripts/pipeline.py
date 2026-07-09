@@ -222,6 +222,22 @@ def main():
     ap.add_argument("--seed-y", type=float)
     ap.add_argument("--seed-r", type=float, default=9)
     ap.add_argument("--auto-seed", action="store_true", help="find seed from the first frame automatically")
+    ap.add_argument("--min-specular", type=int, default=225,
+                    help="brightness gate for specular candidates")
+    ap.add_argument("--max-jump-px", type=float, default=35,
+                    help="candidate gate around predicted position")
+    ap.add_argument("--max-search-px", type=float, default=60,
+                    help="maximum expanded candidate search radius")
+    ap.add_argument("--search-growth", type=float, default=1.15,
+                    help="search-radius growth per missed frame")
+    ap.add_argument("--max-predict-frames", type=int, default=8,
+                    help="number of frames to coast before reporting lost")
+    ap.add_argument("--max-velocity-px-per-frame", type=float, default=35,
+                    help="prediction velocity clamp; <=0 disables it")
+    ap.add_argument("--max-single-frame-jump-px", type=float, default=45,
+                    help="hard gate from last accepted position; <=0 disables it")
+    ap.add_argument("--disable-global-reacquire", action="store_true",
+                    help="after long loss, do not reacquire from any bright spot")
     ap.add_argument("--out-video", default=None, help="optional annotated output video")
     ap.add_argument("--out-csv", default="track.csv")
     ap.add_argument("--end-frame", type=int, default=None,
@@ -233,6 +249,12 @@ def main():
                           "(holes/pegs that glint like the ball) and save them -- run this "
                           "once against footage you already have in full. Not usable on a "
                           "live stream, which by definition has no 'whole video' to scan.")
+    ap.add_argument("--confuser-thresh", type=int, default=225,
+                    help="brightness threshold used by --calibrate")
+    ap.add_argument("--confuser-freq-thresh", type=float, default=0.10,
+                    help="minimum bright-frame frequency for --calibrate confusers")
+    ap.add_argument("--confuser-margin", type=float, default=18,
+                    help="extra pixel radius around each --calibrate confuser")
     ap.add_argument("--confusers-file", default="confusers.json",
                      help="where --calibrate saves to / normal tracking loads from")
     ap.add_argument("--roi", default=None,
@@ -257,7 +279,12 @@ def main():
         if args.roi and args.roi_file:
             raise SystemExit("pass either --roi or --roi-file, not both")
         print(f"scanning {args.calibrate} for static confusers (bright pegs/holes)...")
-        confusers = compute_static_confusers(args.calibrate)
+        confusers = compute_static_confusers(
+            args.calibrate,
+            thresh=args.confuser_thresh,
+            freq_thresh=args.confuser_freq_thresh,
+            margin=args.confuser_margin,
+        )
         roi = None
         roi_source = None
         if args.roi_file:
@@ -290,7 +317,7 @@ def main():
     gray0 = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
     if args.auto_seed:
-        seed = auto_seed(gray0)
+        seed = auto_seed(gray0, args.min_specular)
         if seed is None:
             raise SystemExit("auto-seed failed: no bright specular blob in the seed frame, pass --seed-x/--seed-y")
         print(f"auto-seed: {seed}")
@@ -312,7 +339,20 @@ def main():
         print(f"no confusers file at {args.confusers_file} -- run with --calibrate first; "
               f"tracking without confuser/roi exclusion for now")
 
-    tracker = BallTracker(seed, seed_r=args.seed_r, static_confusers=confusers, roi=roi)
+    tracker = BallTracker(
+        seed,
+        seed_r=args.seed_r,
+        max_jump=args.max_jump_px,
+        max_search=args.max_search_px,
+        search_growth=args.search_growth,
+        min_specular=args.min_specular,
+        max_predict_frames=args.max_predict_frames,
+        static_confusers=confusers,
+        roi=roi,
+        max_velocity_px_per_frame=args.max_velocity_px_per_frame,
+        max_single_frame_jump_px=args.max_single_frame_jump_px,
+        allow_global_reacquire=not args.disable_global_reacquire,
+    )
 
     writer = None
     if args.out_video:
