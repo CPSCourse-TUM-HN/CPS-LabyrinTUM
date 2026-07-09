@@ -43,8 +43,30 @@ class AppConfig:
         return (self.path.parent.parent / path).resolve()
 
 
+def _deep_merge(base: dict, override: dict) -> dict:
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(base.get(key), dict):
+            _deep_merge(base[key], value)
+        else:
+            base[key] = value
+    return base
+
+
 def load_config(path: str | Path) -> AppConfig:
+    """Load a YAML config, then overlay <same-dir>/local.yaml if it exists.
+
+    local.yaml is gitignored and holds per-machine settings (serial port,
+    camera device index) so they stop ping-ponging in default.yaml between
+    teammates' machines.
+    """
     config_path = Path(path)
     with config_path.open("r", encoding="utf-8") as f:
         raw = yaml.safe_load(f)
+
+    local_path = config_path.parent / "local.yaml"
+    if local_path.exists():
+        with local_path.open("r", encoding="utf-8") as f:
+            local = yaml.safe_load(f) or {}
+        _deep_merge(raw, local)
+
     return AppConfig(raw=raw, path=config_path)

@@ -190,21 +190,31 @@ class PipelineBallTracker:
     Self-seeds from the first frame with a strong specular blob and re-seeds
     the same way if the track is lost for a long stretch.
 
+    When seeded from a click, it also captures a small appearance template of
+    the ball and correlates it near the predicted position every frame. On a
+    bright board where glare rivals the ball's glint, this appearance cue is
+    far more specific than brightness and rescues the track when the
+    motion/specular cues fail (e.g. a slow ball with a weak glint).
+
     Optional vision-config keys (all have working defaults):
       min_specular       specular gate, default 225 (lower under dim lighting)
       seed_r             initial ball radius px, default 9
       confusers_file     JSON from pipeline.py --calibrate; loaded if present
+      template_min_score matchTemplate acceptance (0-1), default 0.55
     """
 
     def __init__(self, config: dict):
         self.min_specular = int(config.get("min_specular", 225))
         self.seed_r = float(config.get("seed_r", 9))
+        self.template_min_score = float(config.get("template_min_score", 0.55))
         self.confusers: list = []
         self.roi = None
         confusers_file = config.get("confusers_file", "calibration/live_confusers.json")
         if confusers_file and Path(confusers_file).exists():
             self.confusers, self.roi = load_calibration(confusers_file)
         self.tracker: BallTracker | None = None
+        self._last_gray: np.ndarray | None = None
+        self._template: np.ndarray | None = None
 
     def _make_tracker(self, seed_xy) -> BallTracker:
         return BallTracker(
@@ -219,11 +229,40 @@ class PipelineBallTracker:
         """Manually (re)seed the track, e.g. from a user click on the ball.
 
         Far more reliable than auto-seed on a bright board where glare spots
-        can outshine the ball."""
+        can outshine the ball. Also captures an appearance template of the
+        ball from the last seen frame for per-frame correlation."""
         self.tracker = self._make_tracker((float(x_px), float(y_px)))
+        self._template = None
+        if self._last_gray is not None:
+            half = max(int(self.seed_r * 1.6), 10)
+            h, w = self._last_gray.shape
+            x0, x1 = int(x_px) - half, int(x_px) + half + 1
+            y0, y1 = int(y_px) - half, int(y_px) + half + 1
+            if x0 >= 0 and y0 >= 0 and x1 <= w and y1 <= h:
+                self._template = self._last_gray[y0:y1, x0:x1].copy()
+
+    def _match_template(self, gray: np.ndarray, near_xy, window: int = 80):
+        """Correlate the seed template near a position. Returns (x, y) of the
+        best match center, or None if it is not convincing."""
+        if self._template is None:
+            return None
+        th, tw = self._template.shape
+        h, w = gray.shape
+        cx, cy = int(near_xy[0]), int(near_xy[1])
+        x0, x1 = max(0, cx - window), min(w, cx + window)
+        y0, y1 = max(0, cy - window), min(h, cy + window)
+        if x1 - x0 <= tw or y1 - y0 <= th:
+            return None
+        result = cv2.matchTemplate(gray[y0:y1, x0:x1], self._template,
+                                   cv2.TM_CCOEFF_NORMED)
+        _, max_val, _, max_loc = cv2.minMaxLoc(result)
+        if max_val < self.template_min_score:
+            return None
+        return (float(x0 + max_loc[0] + tw / 2), float(y0 + max_loc[1] + th / 2))
 
     def detect(self, image_bgr: np.ndarray) -> BallDetection:
         gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+        self._last_gray = gray
 
         if self.tracker is None:
             seed = auto_seed(gray, self.min_specular)
@@ -232,6 +271,18 @@ class PipelineBallTracker:
             self.tracker = self._make_tracker(seed)
 
         x, y, r, status = self.tracker.update(gray)
+
+        # appearance assist: correlate the seed template near the track. It
+        # rescues "lost"/"predicted" states and corrects false locks (a glint
+        # matches brightness but not the ball's appearance).
+        hit = self._match_template(gray, (x, y))
+        if hit is not None:
+            drifted = np.hypot(hit[0] - x, hit[1] - y) > 3 * r
+            if status in ("lost", "predicted") or drifted:
+                self.tracker.pos = np.array(hit, dtype=float)
+                self.tracker.miss_streak = 0
+                x, y, status = hit[0], hit[1], "detected"
+
         if status == "lost":
             # allow a fresh auto-seed once the ball is visible again
             seed = auto_seed(gray, self.min_specular)

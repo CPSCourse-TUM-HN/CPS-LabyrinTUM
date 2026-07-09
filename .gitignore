@@ -13,6 +13,9 @@ logs/agent/*.md
 !data/processed/README.md
 !logs/agent/README.md
 
+# Per-machine settings (serial port, camera index) live here, not in git.
+configs/local.yaml
+
 # Calibration output can contain machine-specific generated files.
 calibration/*.npz
 calibration/*.json
