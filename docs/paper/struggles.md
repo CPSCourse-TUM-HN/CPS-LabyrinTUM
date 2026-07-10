@@ -51,13 +51,17 @@ derived artifact was silently wrong until re-measured with a ruler. Lesson:
 physical dimensions are measurements, not config defaults, and every
 downstream artifact must be regenerated when they change.
 
-### ChArUco board mounted off the rolling plane
-The first ChArUco calibration target was glued to a side platform next to
-the board. A homography is only valid for points in a single plane, and the
-pattern's plane was not the plane the ball rolls on, so the calibration was
-systematically warped and initially unusable. Resolution: the pattern must
-lie flat on the play surface during calibration; the corner-click
-calibration served as the reliable default meanwhile.
+### ChArUco calibration attempted and abandoned
+A ChArUco marker board was tried as an automatic calibration target, glued
+to a side platform next to the board. A homography is only valid for points
+in a single plane, and the pattern's plane was not the plane the ball rolls
+on, so the calibration was systematically warped. After the geometric
+problem was understood, the approach was abandoned entirely rather than
+reworked: the manual corner-click calibration was already accurate to a few
+millimetres, takes under a minute, and became the standard method. Lesson:
+an automated calibration is only worth its complexity if it is geometrically
+valid, and a simple manual procedure that is demonstrably sufficient beats a
+sophisticated one that is not.
 
 ### The camera is not a constant
 The OS camera index changed between reboots and USB ports, so scripts

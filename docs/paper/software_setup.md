@@ -35,10 +35,9 @@ the annotated route, compute a tilt command, send it to the Arduino.
 - The image-to-board mapping is a planar homography stored in
   `calibration/board_homography.npz`. It is calibrated by clicking the four
   play-area corners in a live view (`scripts/calibrate_homography.py`) and
-  verified with a reprojected grid overlay. A ChArUco-based calibration
-  script exists as an alternative and writes the same file format; it is
-  only geometrically valid when the printed pattern lies flat on the play
-  surface (a homography maps exactly one plane).
+  verified with a reprojected grid overlay. This corner-click calibration is
+  the method used throughout; a ChArUco marker-based calibration was
+  explored early on and abandoned (see the struggles document).
 - All derived artifacts (route, holes, wall mask) are stored in board
   millimetres, so they survive camera moves; only the homography must be
   recalibrated when the camera pose changes. Fixed rule: a new homography
