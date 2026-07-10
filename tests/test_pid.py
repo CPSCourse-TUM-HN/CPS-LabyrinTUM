@@ -292,3 +292,31 @@ def test_carrot_follower_reset_clears_persistence_timer():
         dt_s=0.02,
     )
     assert abs(command[0]) < 0.05
+
+
+def test_carrot_follower_brake_may_exceed_max_command():
+    # A fast ball needs more tilt to stop than to drive: commands opposing
+    # the motion may use brake_max_command; driving stays at max_command.
+    cfg = CarrotVelocityFollowerConfig(
+        v_max_mm_s=20.0, k_vel=0.1, max_command=0.45,
+        brake_max_command=1.0, stall_kick=0.0,
+    )
+    follower = CarrotVelocityPathFollower(cfg)
+
+    # ball racing +x at 100 mm/s, carrot behind the error -> hard brake
+    command, _ = follower.command(
+        position_mm=np.array([0.0, 0.0]),
+        velocity_mm_s=np.array([100.0, 0.0]),
+        carrot_mm=np.array([10.0, 0.0]),
+        heading_change_deg=0.0,
+    )
+    assert command[0] < -0.9  # brake beyond the 0.45 driving cap
+
+    # slow ball accelerating forward: capped at the driving limit
+    command, _ = follower.command(
+        position_mm=np.array([0.0, 0.0]),
+        velocity_mm_s=np.array([2.0, 0.0]),
+        carrot_mm=np.array([50.0, 0.0]),
+        heading_change_deg=0.0,
+    )
+    assert abs(command[0]) <= 0.45 + 1e-9

@@ -222,6 +222,11 @@ def main() -> None:
     hole_standoff_mm = float(config.control.get("hole_standoff_mm", 10.0))
     hole_brake_accel = float(config.control.get("hole_brake_accel_mm_s2", 250.0))
     hole_emergency = bool(config.control.get("hole_emergency_brake", True))
+    # Braking authority: max_command is a DRIVING gentleness cap; stopping a
+    # fast ball needs the full tilt range (the firmware still clamps).
+    brake_max_command = float(config.control.get("brake_max_command", 1.0))
+    brake_max_command = max(brake_max_command, max_command)
+    brake_slew_per_s = float(config.control.get("brake_slew_per_s", 10.0))
     follower = PathFollower(PathFollowerConfig(
         kp=kp, kd=kd, ki=ki, max_command=max_command,
         stall_kick=stall_kick,
@@ -245,6 +250,7 @@ def main() -> None:
             "stall_request_speed_mm_s", 1.0)),
         stall_min_duration_s=stall_min_duration_s,
         stall_kick_ramp_per_s=stall_kick_ramp_per_s,
+        brake_max_command=brake_max_command,
     ))
     carrot_follower = CarrotVelocityPathFollower(CarrotVelocityFollowerConfig(
         v_max_mm_s=v_max,
@@ -258,6 +264,7 @@ def main() -> None:
             "stall_request_speed_mm_s", 1.0)),
         stall_min_duration_s=stall_min_duration_s,
         stall_kick_ramp_per_s=stall_kick_ramp_per_s,
+        brake_max_command=brake_max_command,
     ))
     print(f"controller: {mode}" + (
         f" (v_max {v_max:.0f} mm/s)" if mode in ("carrot", "velocity") else ""))
@@ -397,10 +404,16 @@ def main() -> None:
                     prev_timestamp_s = frame.timestamp_s
 
                     # hole-aware speed cap: braking starts early enough by
-                    # construction (v_allowed = sqrt(2 a d) toward the pass)
+                    # construction (v_allowed = sqrt(2 a d) toward the pass).
+                    # The horizon grows with speed so a fast ball looks at
+                    # least 1.3 stopping distances ahead.
                     hole_brake = ""
+                    speed_now = float(np.linalg.norm(state.velocity_mm_s))
+                    stop_d = speed_now * speed_now / (2.0 * hole_brake_accel)
+                    horizon = max(hole_horizon_mm,
+                                  1.3 * stop_d + hole_standoff_mm + 20.0)
                     hazard_d = hole_map.path_hazard_distance_mm(
-                        path, progress, horizon_mm=hole_horizon_mm)
+                        path, progress, horizon_mm=horizon)
                     speed_cap = hole_map.speed_cap_mm_s(
                         hazard_d, hole_brake_accel, standoff_mm=hole_standoff_mm)
                     hole_scale = 1.0
@@ -460,18 +473,26 @@ def main() -> None:
                     # opposite to the velocity, bypassing the slew limiter
                     # (an emergency cannot wait for a ramp).
                     emergency = False
-                    speed_now = float(np.linalg.norm(state.velocity_mm_s))
                     if (hole_emergency and speed_now > 15.0
                             and hole_map.must_emergency_brake(
                                 state.position_mm, state.velocity_mm_s,
                                 hole_brake_accel)):
                         emergency = True
                         hole_brake = "emergency"
-                        board_cmd = (-max_command / speed_now) * state.velocity_mm_s
+                        board_cmd = ((-brake_max_command / speed_now)
+                                     * state.velocity_mm_s)
 
-                    servo_cmd = np.clip(axis_map.apply(board_cmd), -max_command, max_command)
-                    if command_slew_per_s > 0.0 and dt_s > 0.0 and not emergency:
-                        max_step = command_slew_per_s * dt_s
+                    # a command opposing the motion is a brake: allow the
+                    # full tilt range and a faster slew (stopping a fast
+                    # ball cannot wait for the gentle driving ramp)
+                    braking = emergency or (
+                        speed_now > 20.0
+                        and float(np.dot(board_cmd, state.velocity_mm_s)) < 0.0)
+                    cap = brake_max_command if braking else max_command
+                    servo_cmd = np.clip(axis_map.apply(board_cmd), -cap, cap)
+                    slew = brake_slew_per_s if braking else command_slew_per_s
+                    if slew > 0.0 and dt_s > 0.0 and not emergency:
+                        max_step = slew * dt_s
                         servo_cmd = prev_servo_cmd + np.clip(
                             servo_cmd - prev_servo_cmd, -max_step, max_step)
                     prev_servo_cmd = servo_cmd.copy()

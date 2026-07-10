@@ -97,6 +97,10 @@ class VelocityFollowerConfig:
     # while braking into a corner; only a sustained stop is real stiction.
     stall_min_duration_s: float = 0.03
     stall_kick_ramp_per_s: float = 0.0  # escalate kick while stall persists
+    # Braking may exceed max_command up to this value (0 = same as
+    # max_command). max_command is a gentleness cap for DRIVING; stopping a
+    # fast ball needs the full tilt authority (firmware still clamps).
+    brake_max_command: float = 0.0
 
 
 class VelocityPathFollower:
@@ -154,7 +158,13 @@ class VelocityPathFollower:
             if magnitude < kick:
                 raw = (kick / v_des_norm) * v_desired  # stable direction
 
-        return np.clip(raw, -cfg.max_command, cfg.max_command), v_desired
+        # asymmetric authority: a command opposing the current motion is a
+        # brake and may use the full tilt range; driving stays gentle
+        cap = cfg.max_command
+        if (cfg.brake_max_command > cfg.max_command and speed > 20.0
+                and float(np.dot(raw, velocity_mm_s)) < 0.0):
+            cap = cfg.brake_max_command
+        return np.clip(raw, -cap, cap), v_desired
 
 
 @dataclass
@@ -173,6 +183,10 @@ class CarrotVelocityFollowerConfig:
     # Escalate the kick while the stall persists (per second of stall), so a
     # spot whose breakaway tilt exceeds stall_kick still gets un-stuck.
     stall_kick_ramp_per_s: float = 0.0
+    # Braking may exceed max_command up to this value (0 = same as
+    # max_command). max_command is a gentleness cap for DRIVING; stopping a
+    # fast ball needs the full tilt authority (firmware still clamps).
+    brake_max_command: float = 0.0
 
 
 class CarrotVelocityPathFollower:
@@ -227,7 +241,13 @@ class CarrotVelocityPathFollower:
                 # with velocity-estimate noise while the ball is parked
                 raw = (kick / v_des_norm) * v_desired
 
-        return np.clip(raw, -cfg.max_command, cfg.max_command), v_desired
+        # asymmetric authority: a command opposing the current motion is a
+        # brake and may use the full tilt range; driving stays gentle
+        cap = cfg.max_command
+        if (cfg.brake_max_command > cfg.max_command and speed > 20.0
+                and float(np.dot(raw, velocity_mm_s)) < 0.0):
+            cap = cfg.brake_max_command
+        return np.clip(raw, -cap, cap), v_desired
 
 
 class PathFollower:
