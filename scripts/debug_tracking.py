@@ -31,6 +31,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from cps_maze.calibration.homography import Homography
 from cps_maze.camera import CameraCapture
 from cps_maze.config import load_config
 from cps_maze.vision.ball_pipeline import PipelineBallTracker
@@ -54,12 +55,32 @@ def dominant_loss_reason(dbg: dict) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="configs/default.yaml")
+    parser.add_argument("--homography", default="calibration/board_homography.npz")
     parser.add_argument("--log", default="data/raw/tracking_debug.csv")
     args = parser.parse_args()
 
     config = load_config(args.config)
     tracker = PipelineBallTracker(config.vision)
     initial_gate = tracker.min_specular
+
+    # Homography is NOT needed for tracking (pixel space), but drawing the
+    # board frame verifies the calibration at a glance: the magenta outline
+    # must hug the play area. If it does not, recalibrate corners and
+    # regenerate the derived artifacts (path/holes/walls AND roi/confusers).
+    homography = None
+    board_px = None
+    if Path(args.homography).exists():
+        homography = Homography.load(args.homography)
+        try:
+            bw = float(config.maze["width_mm"])
+            bh = float(config.maze["height_mm"])
+            border = np.array([[0.0, 0.0], [bw, 0.0], [bw, bh], [0.0, bh]])
+            board_px = homography.board_points_to_image_px(border).astype(np.int32)
+        except (KeyError, TypeError, ValueError):
+            pass
+    else:
+        print(f"note: no homography at {args.homography} - board overlay and "
+              "mm readout disabled (tracking itself does not need it)")
 
     mouse: dict = {}
 
@@ -142,6 +163,9 @@ def main() -> None:
 
             # ---- draw ----
             view = image.copy()
+            if board_px is not None:
+                # magenta = calibrated board frame; must hug the play area
+                cv2.polylines(view, [board_px], True, (255, 0, 255), 2)
             for (cx, cy, cr) in dbg.get("candidates", []):
                 cv2.circle(view, (int(cx), int(cy)), max(int(cr), 3),
                            (0, 165, 255), 1)
@@ -181,8 +205,11 @@ def main() -> None:
                 x0, x1 = max(0, mx - 15), min(w, mx + 16)
                 y0, y1 = max(0, my - 15), min(h, my + 16)
                 if x1 > x0 and y1 > y0:
-                    cv2.putText(view, f"cursor peak: {int(gray[y0:y1, x0:x1].max())}",
-                                (10, view.shape[0] - 12),
+                    cursor = f"cursor peak: {int(gray[y0:y1, x0:x1].max())}"
+                    if homography is not None:
+                        bx, by = homography.image_point_to_board_mm(mx, my)
+                        cursor += f"   board: {bx:.0f}, {by:.0f} mm"
+                    cv2.putText(view, cursor, (10, view.shape[0] - 12),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.62, (0, 255, 255), 2)
             cv2.imshow(WINDOW, view)
 
