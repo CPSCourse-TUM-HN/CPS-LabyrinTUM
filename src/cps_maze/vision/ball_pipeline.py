@@ -99,6 +99,16 @@ def load_calibration(path):
     return [tuple(c) for c in data["confusers"]], data.get("roi")
 
 
+def load_roi_file(path):
+    """Load an ROI polygon from a JSON written by select_maze_roi.py."""
+    data = json.loads(Path(path).read_text())
+    if isinstance(data, list):
+        return data
+    if "roi" not in data:
+        raise ValueError(f"{path} does not contain an roi field")
+    return data["roi"]
+
+
 class BallTracker:
     """Feed grayscale frames one at a time via update(); works for live
     streams too -- it never looks ahead."""
@@ -287,6 +297,7 @@ class PipelineBallTracker:
       template_min_score       matchTemplate acceptance (0-1), default 0.55
       template_search_px       template search half-window, default 45
       template_max_correction_px max template correction from track, default 30
+      roi_file                 optional ROI JSON; overrides ROI embedded in confusers_file
     """
 
     def __init__(self, config: dict):
@@ -312,6 +323,9 @@ class PipelineBallTracker:
         confusers_file = config.get("confusers_file", "calibration/live_confusers.json")
         if confusers_file and Path(confusers_file).exists():
             self.confusers, self.roi = load_calibration(confusers_file)
+        roi_file = config.get("roi_file")
+        if roi_file and Path(roi_file).exists():
+            self.roi = load_roi_file(roi_file)
         self.tracker: BallTracker | None = None
         self._last_gray: np.ndarray | None = None
         self._template: np.ndarray | None = None

@@ -1,3 +1,5 @@
+import json
+
 import cv2
 import numpy as np
 
@@ -109,6 +111,30 @@ def test_live_pipeline_does_not_report_predicted_frames_by_default():
 
     assert seeded.found is True
     assert predicted.found is False
+
+
+def test_live_pipeline_roi_file_overrides_confusers_embedded_roi(tmp_path):
+    confusers_file = tmp_path / "confusers.json"
+    roi_file = tmp_path / "roi.json"
+    old_roi = [[1, 1], [10, 1], [10, 10]]
+    new_roi = [[20, 20], [30, 20], [30, 30]]
+    confusers_file.write_text(json.dumps({
+        "confusers": [[5, 5, 3]],
+        "roi": old_roi,
+    }))
+    roi_file.write_text(json.dumps({
+        "roi": new_roi,
+        "source": "calibration/live_roi_source.png",
+    }))
+
+    tracker = PipelineBallTracker({
+        "min_specular": 240,
+        "confusers_file": str(confusers_file),
+        "roi_file": str(roi_file),
+    })
+
+    assert tracker.confusers == [(5, 5, 3)]
+    assert tracker.roi == new_roi
 
 
 def test_moving_ball_with_blurred_glint_passes_motion_gate():

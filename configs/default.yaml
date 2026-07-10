@@ -42,6 +42,10 @@ vision:
   motion_min_specular: 185
   # Optional confusers/ROI JSON from `pipeline.py --calibrate`; loaded if present.
   confusers_file: "calibration/live_confusers.json"
+  # ROI is selected from a fresh fixed-camera still. It overrides any older ROI
+  # embedded inside live_confusers.json so debug/live tracking shows the newest
+  # playable-surface polygon immediately.
+  roi_file: "calibration/live_roi.json"
   # Demo tracking policy: use click-to-seed and reject implausible jumps
   # instead of auto-locking onto arbitrary bright spots.
   auto_seed: false
@@ -74,14 +78,14 @@ vision:
   debug_overlay: false
   debug_overlay_every_n: 1
   debug_start_stage: "binary"
-  save_debug: false
+  save_debug: false 
   smoothing_alpha: 0.6
 
 control:
   # "carrot" (default): chase a real lookahead point with velocity feedback.
   # "velocity": track local path tangent; "position": legacy lookahead PD.
   mode: "carrot"
-  v_max_mm_s: 25.0   # cruise speed on straights; raise only when reliable
+  v_max_mm_s: 25  # cruise speed on straights; raise only when reliable
   min_speed_frac: 0.35   # floor on cornering/near-wall crawl speed
   # Corner braking, calibrated on the real traced path (2026-07-10): with
   # the old span 30 / slow_deg 70 the accumulated turning exceeded the full-
@@ -96,8 +100,8 @@ control:
   k_lat: 1.6             # pull toward centerline (per mm of cross-track)
   lat_v_max_mm_s: 18.0
   k_vel: 0.012           # tilt per mm/s of velocity error
-  carrot_lookahead_mm: 35.0
-  carrot_min_lookahead_mm: 12.0
+  carrot_lookahead_mm: 20
+  carrot_min_lookahead_mm: 4.0
   lookahead_mm: 18.0
   kp: 0.015
   kd: 0.006
@@ -123,25 +127,25 @@ control:
   # The kick timer also has hysteresis so velocity-estimate noise cannot
   # toggle it on/off (the on/off toggling was visible as board jitter with
   # the ball sitting balanced).
-  stall_kick_ramp_per_s: 0.15
+  stall_kick_ramp_per_s: 0.2
   # Max |servo command| change per second sent to hardware; smooths sudden
   # jumps (stiction kicks, re-association) so corners aren't punched through.
-  command_slew_per_s: 3.0
-  max_command: 0.45
+  command_slew_per_s: 1.5
+  max_command: 0.7
   # --- Braking authority ---
   # max_command is a gentleness cap for DRIVING. Stopping a fast ball needs
   # more tilt than driving does: commands that oppose the current motion may
   # use the full firmware range, and reverse much faster than the driving
   # slew (reversing +0.45 -> -0.45 at 3.0/s wastes 300 ms = 60 mm at
   # 200 mm/s). The firmware pulse clamp still bounds everything.
-  brake_max_command: 1.0
-  brake_slew_per_s: 4
+  brake_max_command: 0.7
+  brake_slew_per_s: 10
   # --- Hole awareness ---
   # Anticipatory: scan the route this far ahead for passes near holes and
   # cap speed by braking physics (v = sqrt(2 a d)), so deceleration starts
   # early instead of when the hole is already close.
   hole_horizon_mm: 80.0
-  hole_standoff_mm: 15        # be at crawl speed this far before the pass
+  hole_standoff_mm: 7        # be at crawl speed this far before the pass
   hole_margin_mm: 4.0           # extra capture clearance around each hole
   ball_radius_mm: 6.0
   # Achievable deceleration from board tilt; measure/tune on the rig. Too

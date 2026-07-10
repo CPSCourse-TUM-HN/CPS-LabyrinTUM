@@ -68,3 +68,41 @@ def snap_response_to_axis_map(response: np.ndarray) -> AxisMap:
 
     # snapped maps servo->board; the controller needs board->servo.
     return AxisMap(matrix=np.linalg.inv(snapped))
+
+
+def normalized_response_to_axis_map(
+    response: np.ndarray,
+    response_scale_mm_per_unit: float | None = None,
+) -> AxisMap:
+    """Build a board->servo map from the full measured response matrix.
+
+    ``response`` columns are the ball displacement (dx, dy) in board mm caused
+    by a unit +yaw and a unit +pitch command respectively. Unlike
+    ``snap_response_to_axis_map``, this keeps the measured axis strength and
+    cross-coupling instead of reducing the result to signs and swaps.
+
+    The controller's commands are still normalized servo commands, not "mm of
+    displacement". To keep command magnitudes comparable to the old snapped
+    map, the inverse response is multiplied by a representative response scale.
+    If no scale is supplied, the median column norm is used, so a unit
+    board-frame command asks for roughly the average measured one-axis
+    displacement.
+    """
+    if response.shape != (2, 2):
+        raise ValueError("response must have shape (2, 2)")
+    det = float(np.linalg.det(response))
+    if abs(det) < 1e-9:
+        raise ValueError(
+            "response matrix is singular; both servo axes appear to produce "
+            "the same board motion"
+        )
+
+    if response_scale_mm_per_unit is None:
+        response_scale_mm_per_unit = float(np.median(np.linalg.norm(response, axis=0)))
+    if response_scale_mm_per_unit <= 0.0:
+        raise ValueError("response_scale_mm_per_unit must be positive")
+
+    # response maps servo->board, so inv(response) maps board->servo. The scale
+    # preserves normalized command size while compensating weak axes and
+    # cross-axis coupling.
+    return AxisMap(matrix=np.linalg.inv(response) * response_scale_mm_per_unit)

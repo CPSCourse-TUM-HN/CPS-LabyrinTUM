@@ -8,6 +8,9 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from cps_maze.camera import CameraCapture
+from cps_maze.config import load_config
+
 
 WINDOW = "Select Maze ROI"
 
@@ -30,6 +33,21 @@ def load_frame(source: Path, frame_index: int) -> np.ndarray:
     if frame is None:
         raise RuntimeError(f"Could not read image/video frame from {source}")
     return frame
+
+
+def capture_photo(config_path: Path, output: Path, warmup_frames: int) -> np.ndarray:
+    config = load_config(config_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with CameraCapture(config.camera) as camera:
+        frame = None
+        for _ in range(max(1, warmup_frames)):
+            frame = camera.read()
+        if frame is None:
+            raise RuntimeError("Could not capture camera frame")
+        cv2.imwrite(str(output), frame.image)
+        print(f"captured ROI photo: {output}")
+        print(f"camera settings: {camera.observed_settings()}")
+        return frame.image
 
 
 def load_existing_roi(path: Path | None) -> list[list[int]]:
@@ -100,21 +118,35 @@ def save_roi(
     print(f"saved ROI: {output}")
     print(f"saved overlay: {overlay_output}")
     print(f"roi arg: {payload['roi_arg']}")
-    print("calibrate with:")
-    print(
-        "  python3 scripts/pipeline.py "
-        f"--calibrate {source} "
-        "--confusers-file calibration/live_confusers.json "
-        f"--roi-file {output}"
-    )
+    print("ROI is ready for live tracking and confuser calibration.")
+    if source.suffix.lower() in {".avi", ".mp4", ".mov", ".mkv"}:
+        print("calibrate confusers with:")
+        print(
+            "  python3 scripts/pipeline.py "
+            f"--calibrate {source} "
+            "--confusers-file calibration/live_confusers.json "
+            f"--roi-file {output}"
+        )
+    else:
+        print("For confusers, run scripts/pipeline.py --calibrate on a representative video "
+              f"and pass --roi-file {output}.")
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Click a playable-maze ROI polygon on a fixed-camera frame."
     )
-    parser.add_argument("--source", default="data/raw/live_camera_20260707_234339.avi")
+    parser.add_argument("--source", default="data/raw/live_camera_20260707_234339.avi",
+                        help="Image or video source. Ignored when --capture is used.")
     parser.add_argument("--frame-index", type=int, default=0)
+    parser.add_argument("--capture", action="store_true",
+                        help="Capture a fresh still from the configured camera, then select ROI on it.")
+    parser.add_argument("--config", default="configs/default.yaml",
+                        help="Config used by --capture.")
+    parser.add_argument("--photo-output", default="calibration/live_roi_source.png",
+                        help="Where --capture saves the still used for ROI selection.")
+    parser.add_argument("--warmup-frames", type=int, default=10,
+                        help="Camera frames to discard before saving the ROI still.")
     parser.add_argument("--output", default="calibration/live_roi.json")
     parser.add_argument("--overlay-output", default="calibration/live_roi_overlay.png")
     parser.add_argument(
@@ -130,7 +162,13 @@ def main() -> None:
     source = Path(args.source)
     output = Path(args.output)
     overlay_output = Path(args.overlay_output)
-    frame = load_frame(source, args.frame_index)
+    if args.capture:
+        source = Path(args.photo_output)
+        frame_index = 0
+        frame = capture_photo(Path(args.config), source, args.warmup_frames)
+    else:
+        frame_index = args.frame_index
+        frame = load_frame(source, frame_index)
     roi = load_existing_roi(Path(args.load) if args.load else output)
     message = "Click the inside playable maze boundary. Exclude CharUco and outer frame."
     saved = False
@@ -159,7 +197,7 @@ def main() -> None:
                 if len(roi) < 3:
                     message = "Need at least 3 points before saving."
                     continue
-                save_roi(output, overlay_output, source, args.frame_index, frame, roi)
+                save_roi(output, overlay_output, source, frame_index, frame, roi)
                 saved = True
                 message = f"Saved {len(roi)} ROI points. Press q to close."
     finally:

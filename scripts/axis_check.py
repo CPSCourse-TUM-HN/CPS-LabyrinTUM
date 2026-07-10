@@ -26,7 +26,10 @@ import numpy as np
 from cps_maze.calibration.homography import Homography
 from cps_maze.camera import CameraCapture
 from cps_maze.config import load_config
-from cps_maze.control.axis_map import snap_response_to_axis_map
+from cps_maze.control.axis_map import (
+    normalized_response_to_axis_map,
+    snap_response_to_axis_map,
+)
 from cps_maze.hardware.serial_link import ArduinoServoLink, ServoCommand
 from cps_maze.vision.ball_pipeline import make_tracker
 
@@ -149,6 +152,13 @@ def main() -> None:
                         help="Frames averaged per position measurement")
     parser.add_argument("--measure-timeout-s", type=float, default=5.0,
                         help="How long to wait for enough detected frames before retrying")
+    parser.add_argument("--map-mode", choices=["snap", "normalized-response"],
+                        default="snap",
+                        help="snap saves only sign/swap mapping; normalized-response "
+                             "also compensates measured axis strength and cross-coupling")
+    parser.add_argument("--response-scale-mm-per-unit", type=float, default=None,
+                        help="Scale used by --map-mode normalized-response. Defaults "
+                             "to the median measured one-axis response.")
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -247,7 +257,15 @@ def main() -> None:
     print("\nresponse matrix (board mm per unit command):")
     print(response.round(1))
 
-    axis_map = snap_response_to_axis_map(response)
+    if args.map_mode == "normalized-response":
+        axis_map = normalized_response_to_axis_map(
+            response,
+            response_scale_mm_per_unit=args.response_scale_mm_per_unit,
+        )
+        print("\neffective response after board->servo map:")
+        print((response @ axis_map.matrix).round(1))
+    else:
+        axis_map = snap_response_to_axis_map(response)
     axis_map.save(args.output)
     print(f"\nsaved axis map -> {args.output}")
     print("board->servo matrix:")

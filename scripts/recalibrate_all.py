@@ -177,6 +177,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--path", default="configs/maze_path_auto.csv")
     parser.add_argument("--roi", default="calibration/live_roi.json")
     parser.add_argument("--roi-overlay", default="calibration/live_roi_overlay.png")
+    parser.add_argument("--roi-photo", default="calibration/live_roi_source.png")
     parser.add_argument("--confusers", default="calibration/live_confusers.json")
     parser.add_argument("--axis-map", default="calibration/axis_map.npz")
     parser.add_argument(
@@ -279,8 +280,11 @@ def main() -> None:
         [
             sys.executable,
             str(SCRIPTS / "select_maze_roi.py"),
-            "--source",
-            str(video),
+            "--capture",
+            "--config",
+            args.config,
+            "--photo-output",
+            args.roi_photo,
             "--output",
             args.roi,
             "--overlay-output",
