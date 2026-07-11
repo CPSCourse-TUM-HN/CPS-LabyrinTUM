@@ -294,13 +294,46 @@ def main() -> None:
         "Click a polygon around only the playable maze area, press s to save, then q.",
     )
 
+    # Confusers must be calibrated from a BALL-FREE recording: they mark
+    # locations that are bright suspiciously often, and a ball lingering
+    # anywhere for >10% of the video blacklists its own resting spots -
+    # after which the live tracker permanently rejects the ball there
+    # (observed: 90 ghost confusers blanketing the play area, random track
+    # losses, tracking teleports onto uncovered glints).
+    confuser_video = (REPO_ROOT / "data" / "raw"
+                      / f"recalibration_{timestamp}_noball.avi")
+    print("\n" + "=" * 78)
+    print("Record BALL-FREE Footage For Confuser Calibration")
+    print("=" * 78)
+    prompt(
+        "REMOVE THE BALL from the board completely (set it on the desk). "
+        "Confusers are static bright features; the ball must not be in "
+        "this recording.",
+        args.yes,
+    )
+    run_step(
+        "Record Ball-Free Footage",
+        [
+            sys.executable,
+            str(SCRIPTS / "record_camera.py"),
+            "--config",
+            args.config,
+            "--output",
+            str(confuser_video),
+            "--duration-s",
+            "20",
+        ],
+        assume_yes=True,
+        instructions="Board level, no ball, lighting as during runs.",
+    )
+
     run_step(
         "Rebuild Static Confusers",
         [
             sys.executable,
             str(SCRIPTS / "pipeline.py"),
             "--calibrate",
-            str(video),
+            str(confuser_video),
             "--confusers-file",
             args.confusers,
             "--roi-file",

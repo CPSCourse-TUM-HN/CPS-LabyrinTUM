@@ -304,6 +304,12 @@ def main():
         save_calibration(confusers, roi, args.confusers_file, metadata=metadata)
         print(f"found {len(confusers)} confuser(s)" + (f", roi with {len(roi)} points" if roi else ", no roi given")
               + f", saved to {args.confusers_file}")
+        if len(confusers) > 30:
+            print("WARNING: that is far more confusers than a board has "
+                  "static bright features (~5-15). The BALL was almost "
+                  "certainly in this video and has blacklisted its own "
+                  "resting spots - the live tracker will then lose it there. "
+                  "Re-record with NO ball on the board and calibrate again.")
         return
 
     if not args.video:
