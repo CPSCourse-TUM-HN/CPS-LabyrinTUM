@@ -157,6 +157,22 @@ control:
   # near holes are small and steady - control, not violent avoidance.
   plan_latency_s: 0.35
   slowzone_max_command: 0.55
+  # --- Composure / stabilize state ---
+  # Breaks the freak-out cascade seen at hole 1: near-miss -> rough brake
+  # -> ball too fast -> unstable -> follower pushed forward anyway -> fell.
+  # When the emergency brake fires or speed exceeds
+  # max(2x planned, planned + overspeed margin), the runner stops pursuing
+  # progress: it holds the entry position with damped position control and
+  # resumes path following only after the ball has been nearly still for
+  # stabilize_still_s (or the timeout expires). Followers are reset on exit
+  # so no stale integral/derivative state relaunches the ball.
+  stabilize_enabled: true
+  stabilize_overspeed_margin_mm_s: 20.0
+  stabilize_exit_speed_mm_s: 5.0   # "still" means slower than this
+  stabilize_still_s: 0.6           # must stay still this long to resume
+  stabilize_max_s: 3.0             # give up holding after this and resume
+  stabilize_kp: 0.010              # hold-position pull per mm of drift
+  stabilize_kd: 0.012              # damping per mm/s of residual speed
   # --- Route speed profile (replaces the per-frame reactive hole cap) ---
   # Computed ONCE at startup over the whole route: hole passes, wall
   # clearance, corners, and goal approach become speed limits by place, then
