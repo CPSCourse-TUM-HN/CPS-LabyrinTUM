@@ -135,14 +135,14 @@ control:
   # Max |servo command| change per second sent to hardware; smooths sudden
   # jumps (stiction kicks, re-association) so corners aren't punched through.
   command_slew_per_s: 1.5
-  max_command: 0.7
+  max_command: 1
   # --- Braking authority ---
   # max_command is a gentleness cap for DRIVING. Stopping a fast ball needs
   # more tilt than driving does: commands that oppose the current motion may
   # use the full firmware range, and reverse much faster than the driving
   # slew (reversing +0.45 -> -0.45 at 3.0/s wastes 300 ms = 60 mm at
   # 200 mm/s). The firmware pulse clamp still bounds everything.
-  brake_max_command: 0.7
+  brake_max_command: 1
   brake_slew_per_s: 10
   # --- Route speed profile (replaces the per-frame reactive hole cap) ---
   # Computed ONCE at startup over the whole route: hole passes, wall

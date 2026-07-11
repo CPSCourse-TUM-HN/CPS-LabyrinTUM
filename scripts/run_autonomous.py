@@ -47,6 +47,17 @@ from cps_maze.vision.state_estimator import LowPassVelocityEstimator
 
 WINDOW = "autonomous run"
 
+RUN_LOG_FIELDS = [
+    "timestamp_s", "found", "x_mm", "y_mm", "vx_mm_s", "vy_mm_s",
+    "target_x_mm", "target_y_mm", "progress_mm",
+    "carrot_x_mm", "carrot_y_mm", "desired_vx_mm_s", "desired_vy_mm_s",
+    "cross_track_mm", "turn_deg", "wall_speed_scale", "hole_brake",
+    "wall_distance_mm", "target_speed_mm_s",
+    "hole_hazard_distance_mm", "hole_speed_cap_mm_s",
+    "wall_escape_x", "wall_escape_y",
+    "board_cmd_x", "board_cmd_y", "yaw_command", "pitch_command",
+]
+
 
 def load_holes(path: Path) -> np.ndarray:
     """Returns (N, 3) array of x_mm, y_mm, radius_mm; empty if file missing."""
@@ -308,16 +319,6 @@ def main() -> None:
     estimator = LowPassVelocityEstimator()
     total_length = float(path.cumulative_lengths[-1])
 
-    log_fields = [
-        "timestamp_s", "found", "x_mm", "y_mm", "vx_mm_s", "vy_mm_s",
-        "target_x_mm", "target_y_mm", "progress_mm",
-        "carrot_x_mm", "carrot_y_mm", "desired_vx_mm_s", "desired_vy_mm_s",
-        "cross_track_mm", "turn_deg", "wall_speed_scale", "hole_brake",
-        "wall_distance_mm", "target_speed_mm_s",
-        "wall_escape_x", "wall_escape_y",
-        "board_cmd_x", "board_cmd_y", "yaw_command", "pitch_command",
-    ]
-
     if args.dry_run:
         serial_ctx: contextlib.AbstractContextManager = contextlib.nullcontext()
         print("DRY RUN: servos disabled, visualization only")
@@ -346,7 +347,7 @@ def main() -> None:
         cv2.setMouseCallback(WINDOW, on_mouse)
 
     with CameraCapture(config.camera) as camera, serial_ctx as link, \
-            CsvRunLogger(Path(args.log), log_fields) as logger:
+            CsvRunLogger(Path(args.log), RUN_LOG_FIELDS) as logger:
         if link is not None:
             time.sleep(2.0)  # Arduino reset after port open
             link.neutral()
