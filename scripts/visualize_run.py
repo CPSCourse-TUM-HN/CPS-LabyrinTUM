@@ -260,6 +260,7 @@ class RunVisualizer:
         target = np.array([f(row, "target_x_mm"), f(row, "target_y_mm")])
         desired = np.array([f(row, "desired_vx_mm_s"), f(row, "desired_vy_mm_s")])
         board_cmd = np.array([f(row, "board_cmd_x"), f(row, "board_cmd_y")])
+        wall_escape = np.array([f(row, "wall_escape_x"), f(row, "wall_escape_y")])
         speed = float(np.linalg.norm(vel))
         cmd_mag = float(np.hypot(f(row, "yaw_command"), f(row, "pitch_command")))
         wall_scale = f(row, "wall_speed_scale", 1.0)
@@ -281,8 +282,12 @@ class RunVisualizer:
         stop_d = speed * speed / max(2.0 * self.hole_brake_accel, 1e-9)
         horizon = max(self.hole_horizon_mm, 1.3 * stop_d + self.hole_standoff_mm + 20.0)
         hazard_d = self.hole_map.path_hazard_distance_mm(self.path, progress, horizon)
+        if row.get("hole_hazard_distance_mm", "") not in ("", None):
+            hazard_d = f(row, "hole_hazard_distance_mm")
         speed_cap = self.hole_map.speed_cap_mm_s(
             hazard_d, self.hole_brake_accel, self.hole_standoff_mm)
+        if row.get("hole_speed_cap_mm_s", "") not in ("", None):
+            speed_cap = f(row, "hole_speed_cap_mm_s")
         horizon_px = self.path_poly_px(progress, progress + horizon)
         cv2.polylines(img, [horizon_px], False, (0, 190, 255), 3, cv2.LINE_AA)
         if hazard_d is not None:
@@ -298,8 +303,12 @@ class RunVisualizer:
             draw_arrow_mm(img, self.homography, ball, vel, (255, 0, 0), "vel", 0.18)
             draw_arrow_mm(img, self.homography, ball, desired, (0, 255, 255), "desired", 0.30)
             draw_arrow_mm(img, self.homography, ball, board_cmd, (0, 140, 255), "cmd", 20.0)
+            draw_arrow_mm(img, self.homography, ball, wall_escape,
+                          (255, 0, 255), "wall escape", 30.0)
 
-        if self.wall_map is not None and found(row):
+        if row.get("wall_distance_mm", "") not in ("", None):
+            wall_d = f(row, "wall_distance_mm")
+        elif self.wall_map is not None and found(row):
             wall_d = self.wall_map.wall_distance_mm(ball)
         else:
             wall_d = float("nan")
@@ -322,6 +331,8 @@ class RunVisualizer:
             reasons.append("braking: command opposes velocity")
         if stalled:
             reasons.append("STALLED: command present but speed < 8mm/s")
+        if float(np.linalg.norm(wall_escape)) > 1e-9:
+            reasons.append(f"wall escape command {np.linalg.norm(wall_escape):.2f}")
         if not reasons:
             reasons.append("no active slowdown/brake flag")
 
@@ -348,6 +359,8 @@ class RunVisualizer:
                  (18, legend_y), (255, 255, 255), 0.48)
         put_text(img, "blue=ball/velocity  yellow=target/desired velocity  orange arrow=board command",
                  (18, legend_y + 24), (255, 255, 255), 0.48)
+        put_text(img, "magenta arrow=wall escape unstick bias",
+                 (18, legend_y + 48), (255, 255, 255), 0.48)
         return img
 
 

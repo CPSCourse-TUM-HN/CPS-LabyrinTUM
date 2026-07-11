@@ -19,6 +19,25 @@ def test_path_hazard_distance_finds_hole_on_route():
     assert 38.0 <= d <= 46.0  # capture zone starts at x = 60 - 18 = 42
 
 
+def test_path_hazard_distance_ignores_zone_already_being_crossed():
+    holes = _hole_map()
+    path = WaypointPath(points_mm=np.array([[0.0, 0.0], [200.0, 0.0]]))
+
+    assert holes.path_hazard_distance_mm(path, progress_mm=60.0, horizon_mm=30.0) is None
+
+
+def test_path_hazard_distance_can_report_current_zone_when_requested():
+    holes = _hole_map()
+    path = WaypointPath(points_mm=np.array([[0.0, 0.0], [200.0, 0.0]]))
+
+    assert holes.path_hazard_distance_mm(
+        path,
+        progress_mm=60.0,
+        horizon_mm=30.0,
+        ignore_current_hazard=False,
+    ) == 0.0
+
+
 def test_path_hazard_distance_clear_when_route_avoids_hole():
     holes = HoleMap(np.array([[60.0, 50.0, 8.0]]))  # far off the route
     path = WaypointPath(points_mm=np.array([[0.0, 0.0], [200.0, 0.0]]))

@@ -222,10 +222,16 @@ def main() -> None:
     hole_standoff_mm = float(config.control.get("hole_standoff_mm", 10.0))
     hole_brake_accel = float(config.control.get("hole_brake_accel_mm_s2", 250.0))
     hole_emergency = bool(config.control.get("hole_emergency_brake", True))
+    hole_ignore_current_hazard = bool(config.control.get(
+        "hole_ignore_current_hazard", True))
     hole_emergency_offroute_mm = float(config.control.get(
         "hole_emergency_offroute_mm", 12.0))
     hole_emergency_align_deg = float(config.control.get(
         "hole_emergency_align_deg", 40.0))
+    wall_escape_distance_mm = float(config.control.get("wall_escape_distance_mm", 6.0))
+    wall_escape_speed_mm_s = float(config.control.get("wall_escape_speed_mm_s", 8.0))
+    wall_escape_command = float(config.control.get("wall_escape_command", 0.20))
+    wall_escape_min_cmd = float(config.control.get("wall_escape_min_command", 0.08))
     # Braking authority: max_command is a DRIVING gentleness cap; stopping a
     # fast ball needs the full tilt range (the firmware still clamps).
     brake_max_command = float(config.control.get("brake_max_command", 1.0))
@@ -280,6 +286,8 @@ def main() -> None:
         "target_x_mm", "target_y_mm", "progress_mm",
         "carrot_x_mm", "carrot_y_mm", "desired_vx_mm_s", "desired_vy_mm_s",
         "cross_track_mm", "turn_deg", "wall_speed_scale", "hole_brake",
+        "wall_distance_mm", "hole_hazard_distance_mm", "hole_speed_cap_mm_s",
+        "wall_escape_x", "wall_escape_y",
         "board_cmd_x", "board_cmd_y", "yaw_command", "pitch_command",
     ]
 
@@ -417,7 +425,8 @@ def main() -> None:
                     horizon = max(hole_horizon_mm,
                                   1.3 * stop_d + hole_standoff_mm + 20.0)
                     hazard_d = hole_map.path_hazard_distance_mm(
-                        path, progress, horizon_mm=horizon)
+                        path, progress, horizon_mm=horizon,
+                        ignore_current_hazard=hole_ignore_current_hazard)
                     speed_cap = hole_map.speed_cap_mm_s(
                         hazard_d, hole_brake_accel, standoff_mm=hole_standoff_mm)
                     hole_scale = 1.0
@@ -425,6 +434,8 @@ def main() -> None:
                         hole_scale = min(1.0, speed_cap / max(v_max, 1e-6))
                         if hole_scale < 0.999:
                             hole_brake = "slow"
+                    wall_distance = (wall_map.wall_distance_mm(board_xy)
+                                     if wall_map is not None else float("inf"))
 
                     if mode == "velocity":
                         path_point = path.point_at_progress_mm(progress)
@@ -471,6 +482,19 @@ def main() -> None:
                         board_cmd = follower.command(state.position_mm,
                                                      state.velocity_mm_s,
                                                      target, dt_s)
+                    wall_escape = np.zeros(2)
+                    if (wall_map is not None
+                            and wall_escape_command > 0.0
+                            and wall_distance <= wall_escape_distance_mm
+                            and speed_now < wall_escape_speed_mm_s
+                            and float(np.linalg.norm(board_cmd)) > wall_escape_min_cmd):
+                        escape_dir = wall_map.escape_direction_mm(state.position_mm)
+                        if float(np.linalg.norm(escape_dir)) > 1e-9:
+                            away_component = float(np.dot(board_cmd, escape_dir))
+                            needed = wall_escape_command - away_component
+                            if needed > 0.0:
+                                wall_escape = needed * escape_dir
+                                board_cmd = board_cmd + wall_escape
                     # Reactive layer: the trajectory enters a hole and the
                     # stopping distance exceeds the distance to it - normal
                     # control can no longer prevent the fall. Full brake
@@ -509,6 +533,8 @@ def main() -> None:
                         status += "  EMERGENCY BRAKE"
                     elif hole_brake == "slow":
                         status += "  hole ahead"
+                    if float(np.linalg.norm(wall_escape)) > 1e-9:
+                        status += "  wall escape"
 
                     if link is not None:
                         link.send(ServoCommand(yaw=float(servo_cmd[0]),
@@ -524,6 +550,10 @@ def main() -> None:
                         "cross_track_mm": cross, "turn_deg": turn_deg,
                         "wall_speed_scale": wall_scale,
                         "hole_brake": hole_brake,
+                        "wall_distance_mm": wall_distance,
+                        "hole_hazard_distance_mm": "" if hazard_d is None else hazard_d,
+                        "hole_speed_cap_mm_s": "" if speed_cap is None else speed_cap,
+                        "wall_escape_x": wall_escape[0], "wall_escape_y": wall_escape[1],
                         "board_cmd_x": board_cmd[0], "board_cmd_y": board_cmd[1],
                         "yaw_command": servo_cmd[0], "pitch_command": servo_cmd[1],
                     })
@@ -552,6 +582,11 @@ def main() -> None:
                         "desired_vx_mm_s": "", "desired_vy_mm_s": "",
                         "cross_track_mm": "", "turn_deg": "",
                         "wall_speed_scale": "",
+                        "hole_brake": "",
+                        "wall_distance_mm": "",
+                        "hole_hazard_distance_mm": "",
+                        "hole_speed_cap_mm_s": "",
+                        "wall_escape_x": "", "wall_escape_y": "",
                         "board_cmd_x": "", "board_cmd_y": "",
                         "yaw_command": 0.0, "pitch_command": 0.0,
                     })

@@ -151,6 +151,11 @@ control:
   # Achievable deceleration from board tilt; measure/tune on the rig. Too
   # high = brakes too late; too low = crawls far from every hole.
   hole_brake_accel_mm_s2: 118
+  # If the current path point is already inside an inflated hole capture zone,
+  # do not keep reporting that same zone as "0 mm ahead" forever. The ball
+  # needs to keep moving through planned narrow passes instead of braking into
+  # a permanent crawl.
+  hole_ignore_current_hazard: true
   # Reactive: full brake opposite the velocity (bypassing the slew limiter)
   # when the trajectory enters a hole and stopping distance exceeds the
   # distance to it.
@@ -163,6 +168,14 @@ control:
   # or moving misaligned with the path direction:
   hole_emergency_offroute_mm: 15.0
   hole_emergency_align_deg: 50.0
+  # When the ball is stalled while physically close to a wall, ensure the
+  # command has at least this much component away from the nearest wall. This
+  # is a local unstick bias for outside-corner catches; it does not change
+  # normal path following in open space.
+  wall_escape_distance_mm: 6.0
+  wall_escape_speed_mm_s: 8.0
+  wall_escape_command: 0.22
+  wall_escape_min_command: 0.08
 
 maze:
   # Play-area size. VERIFY WITH A RULER: merged value was 3220x2820,

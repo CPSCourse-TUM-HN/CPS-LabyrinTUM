@@ -33,20 +33,37 @@ class HoleMap:
         progress_mm: float,
         horizon_mm: float = 80.0,
         step_mm: float = 4.0,
+        ignore_current_hazard: bool = True,
     ) -> float | None:
-        """Distance along the route to the first pass through a hole's
-        capture zone, or None if the route ahead is clear within the horizon.
+        """Distance along the route to the next ENTRY into a hole capture zone.
+
+        Returns None if the route ahead is clear within the horizon. When the
+        current path point is already inside an inflated capture zone,
+        ``ignore_current_hazard`` skips that zone until the route exits it.
+        That prevents a planned narrow pass from reporting ``0 mm ahead`` for
+        every frame and acting like an invisible braking wall.
         """
         if not len(self.holes):
             return None
         steps = max(int(horizon_mm / step_mm), 1)
+        started_in_hazard = bool(self._path_point_in_capture(
+            path.point_at_progress_mm(progress_mm)))
         for i in range(steps + 1):
             s = progress_mm + i * step_mm
             p = path.point_at_progress_mm(s)
-            d = np.hypot(self.holes[:, 0] - p[0], self.holes[:, 1] - p[1])
-            if bool(np.any(d < self.capture_mm)):
+            in_hazard = self._path_point_in_capture(p)
+            if ignore_current_hazard and started_in_hazard:
+                if in_hazard:
+                    continue
+                started_in_hazard = False
+                continue
+            if in_hazard:
                 return float(i * step_mm)
         return None
+
+    def _path_point_in_capture(self, p: np.ndarray) -> bool:
+        d = np.hypot(self.holes[:, 0] - p[0], self.holes[:, 1] - p[1])
+        return bool(np.any(d < self.capture_mm))
 
     def speed_cap_mm_s(
         self,

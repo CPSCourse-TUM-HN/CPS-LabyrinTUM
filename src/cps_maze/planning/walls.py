@@ -50,6 +50,43 @@ class WallMap:
             return 0.0
         return float(self._dist_px[y, x]) / self.scale
 
+    def escape_direction_mm(self, p_mm: np.ndarray,
+                            sample_mm: float = 2.0) -> np.ndarray:
+        """Unit vector pointing toward increasing wall clearance.
+
+        This is used only as a local unstick hint when the ball is stalled
+        while close to a wall. It is intentionally geometry-only: it does not
+        choose a target, it just says which board direction moves away from
+        the nearest obstacle according to the distance transform.
+        """
+        p = np.asarray(p_mm, dtype=float)
+        d = max(float(sample_mm), 1e-6)
+        grad = np.array([
+            self.wall_distance_mm(p + np.array([d, 0.0]))
+            - self.wall_distance_mm(p - np.array([d, 0.0])),
+            self.wall_distance_mm(p + np.array([0.0, d]))
+            - self.wall_distance_mm(p - np.array([0.0, d])),
+        ])
+        norm = float(np.linalg.norm(grad))
+        if norm > 1e-9:
+            return grad / norm
+
+        # Flat/quantized local neighborhood: pick the best of eight nearby
+        # directions. This also helps if the estimated ball center is on a
+        # wall pixel where the distance transform is exactly zero.
+        dirs = []
+        for angle in np.linspace(0.0, 2.0 * np.pi, 8, endpoint=False):
+            dirs.append(np.array([np.cos(angle), np.sin(angle)]))
+        best_dir = np.zeros(2)
+        best_dist = self.wall_distance_mm(p)
+        for direction in dirs:
+            dist = self.wall_distance_mm(p + d * direction)
+            if dist > best_dist:
+                best_dist = dist
+                best_dir = direction
+        best_norm = float(np.linalg.norm(best_dir))
+        return best_dir / best_norm if best_norm > 1e-9 else np.zeros(2)
+
     def line_blocked(self, a_mm: np.ndarray, b_mm: np.ndarray,
                      step_mm: float = 2.0) -> bool:
         a = np.asarray(a_mm, dtype=float)
