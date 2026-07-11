@@ -18,7 +18,9 @@ Keys during the run: SPACE = start next pulse, q/Esc = abort.
 from __future__ import annotations
 
 import argparse
+import shutil
 import time
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -179,6 +181,26 @@ def main() -> None:
     print(__doc__)
     displacements: dict[str, np.ndarray] = {}
 
+    try:
+        camera_ctx = CameraCapture(config.camera)
+        camera_ctx.open()
+    except Exception as exc:
+        raise SystemExit(
+            f"could not open camera (device {config.camera['device_index']}): "
+            f"{exc}\nClose every other tool using the camera (runner, "
+            "debug_tracking, teleop preview) and try again.")
+    camera_ctx.close()
+    try:
+        probe = ArduinoServoLink(port=port,
+                                 baudrate=int(config.serial["baudrate"]),
+                                 timeout_s=float(config.serial["timeout_s"]))
+        probe.close()
+    except Exception as exc:
+        raise SystemExit(
+            f"could not open serial port {port}: {exc}\nClose the Arduino "
+            "Serial Monitor / runner / teleop holding the port, or pass "
+            "--port COMxx.")
+
     with CameraCapture(config.camera) as camera, ArduinoServoLink(
         port=port,
         baudrate=int(config.serial["baudrate"]),
@@ -257,17 +279,33 @@ def main() -> None:
     print("\nresponse matrix (board mm per unit command):")
     print(response.round(1))
 
-    if args.map_mode == "normalized-response":
-        axis_map = normalized_response_to_axis_map(
-            response,
-            response_scale_mm_per_unit=args.response_scale_mm_per_unit,
-        )
-        print("\neffective response after board->servo map:")
-        print((response @ axis_map.matrix).round(1))
-    else:
-        axis_map = snap_response_to_axis_map(response)
+    try:
+        if args.map_mode == "normalized-response":
+            axis_map = normalized_response_to_axis_map(
+                response,
+                response_scale_mm_per_unit=args.response_scale_mm_per_unit,
+            )
+            print("\neffective response after board->servo map:")
+            print((response @ axis_map.matrix).round(1))
+        else:
+            axis_map = snap_response_to_axis_map(response)
+    except ValueError as exc:
+        print(f"\nMEASUREMENT UNUSABLE: {exc}")
+        print("The existing axis map file was NOT touched. Check the linkage "
+              "(both axes must visibly move the ball), re-center carefully, "
+              "and run again.")
+        return
+
+    out = Path(args.output)
+    if out.exists():
+        backup = out.with_name(
+            f"{out.stem}_backup_{time.strftime('%Y%m%d_%H%M%S')}.npz")
+        shutil.copy2(out, backup)
+        print(f"\nprevious (working) axis map backed up -> {backup}")
+        print("If the new map behaves worse, restore it: "
+              f"copy {backup.name} over {out.name}")
     axis_map.save(args.output)
-    print(f"\nsaved axis map -> {args.output}")
+    print(f"saved axis map -> {args.output}")
     print("board->servo matrix:")
     print(axis_map.matrix)
     print("\nSanity check: a +x board command should now roll the ball toward "
