@@ -242,7 +242,12 @@ control:
   # Local recovery planner: when the ball is off-route, stalled, or the
   # marker is across a wall, plan a temporary A* path from the actual ball
   # position to the current carrot/marker through wall- and hole-safe space.
-  recovery_astar_enabled: true
+  # DISABLED: the camera's oblique view of the walls is imperfect, so the ball
+  # often looks like it is touching a wall when it is not, which fires false
+  # "A* recovery: wall" episodes that hijack the carrot and make things worse.
+  # Re-enable only with a cleaner wall view / mask. The normal path following +
+  # off-route wall speed-scale + emergency brake still handle recovery.
+  recovery_astar_enabled: false
   recovery_astar_grid_mm: 4.0
   recovery_astar_follow_mm: 20.0
   recovery_astar_goal_lookahead_mm: 35.0
