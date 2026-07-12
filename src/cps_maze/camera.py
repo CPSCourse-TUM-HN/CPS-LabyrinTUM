@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from dataclasses import dataclass
 from time import monotonic
@@ -36,6 +37,7 @@ class CameraCapture:
     def __init__(self, config: dict):
         self.config = config
         self.cap: cv2.VideoCapture | None = None
+        self.reader = None  # SharedFrameReader when attached to a camera server
 
     def requested_settings(self) -> dict[str, Any]:
         return {
@@ -50,6 +52,12 @@ class CameraCapture:
         }
 
     def observed_settings(self) -> dict[str, Any]:
+        if self.reader is not None:
+            return {
+                "backend": -1, "fourcc": "SHM",
+                "width": self.reader.width, "height": self.reader.height,
+                "fps": float("nan"),
+            }
         if self.cap is None:
             raise RuntimeError("Camera is not open")
         return {
@@ -61,6 +69,23 @@ class CameraCapture:
         }
 
     def open(self) -> None:
+        # If a camera server is publishing frames, attach to it (instant) so
+        # the slow MSMF device open is paid once by the server, not per script.
+        # Disabled with camera.use_shared_server=false or CPS_CAMERA_NO_SERVER.
+        use_server = bool(self.config.get("use_shared_server", True)) and \
+            os.environ.get("CPS_CAMERA_NO_SERVER") not in ("1", "true", "True")
+        if use_server:
+            try:
+                from . import camera_share
+                if camera_share.server_running():
+                    self.reader = camera_share.SharedFrameReader()
+                    print("camera: attached to shared camera server "
+                          f"({self.reader.width}x{self.reader.height}, instant open)")
+                    return
+            except Exception as exc:  # fall back to opening the device directly
+                print(f"camera: shared server not usable ({exc}); opening device")
+                self.reader = None
+
         device_index = int(self.config["device_index"])
         # Windows: use MSMF, NOT DirectShow. On the lab rig DirectShow only
         # exposes the camera's uncompressed YUY2 mode, which USB2 bandwidth
@@ -96,6 +121,16 @@ class CameraCapture:
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
     def read(self) -> Frame:
+        if self.reader is not None:
+            image, timestamp_s, _seq = self.reader.latest()
+            # The server publishes raw frames; apply this client's own flips so
+            # behavior matches opening the device directly. The timestamp is the
+            # server's true capture time (process-wide comparable monotonic).
+            if self.config.get("flip_horizontal", False):
+                image = cv2.flip(image, 1)
+            if self.config.get("flip_vertical", False):
+                image = cv2.flip(image, 0)
+            return Frame(image=image, timestamp_s=timestamp_s)
         if self.cap is None:
             raise RuntimeError("Camera is not open")
         ok, image = self.cap.read()
@@ -108,6 +143,10 @@ class CameraCapture:
         return Frame(image=image, timestamp_s=monotonic())
 
     def close(self) -> None:
+        if self.reader is not None:
+            # Detach only - do NOT stop the server; other scripts may share it.
+            self.reader.close()
+            self.reader = None
         if self.cap is not None:
             self.cap.release()
             self.cap = None

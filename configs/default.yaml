@@ -13,6 +13,12 @@ camera:
   fps: 120
   flip_horizontal: false
   flip_vertical: false
+  # Attach to scripts/camera_server.py if it is running, so the slow MSMF open
+  # (10-30 s) is paid ONCE by the server instead of by every script. Start the
+  # server at the top of a calibration/lab session and all tools open
+  # instantly. Set false (or export CPS_CAMERA_NO_SERVER=1) to always open the
+  # device directly. Harmless when no server is running - it falls through.
+  use_shared_server: true
 
 serial:
   port: "/dev/cu.usbmodem1101"
