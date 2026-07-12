@@ -283,6 +283,28 @@ def main() -> None:
     pitch_col = (displacements["+pitch"] - displacements["-pitch"]) / 2.0
     response = np.column_stack([yaw_col, pitch_col])
 
+    # Sanity: all four directions should move the ball a similar distance. One
+    # that moved much less than the others almost always means the ball hit a
+    # WALL mid-pulse and could not travel the full way - which SKEWS the map and
+    # makes the controller over-drive the axis that looks weak (observed: a
+    # -pitch reading 36 mm vs 80 mm inflated the pitch gain 26% and caused a
+    # visible pitch wiggle that trapped the ball at the start).
+    mags = {k: float(np.linalg.norm(v)) for k, v in displacements.items()}
+    med = float(np.median(list(mags.values())))
+    weak = [k for k, m in mags.items() if med > 0 and m < 0.6 * med]
+    print("\nper-direction response magnitude (mm per unit command):")
+    for k in ("+yaw", "-yaw", "+pitch", "-pitch"):
+        flag = "   <-- WEAK, likely hit a wall" if k in weak else ""
+        print(f"  {k:7s} {mags[k]:6.2f}{flag}")
+    if weak:
+        print(f"\n*** WARNING: {', '.join(weak)} moved far less than the other "
+              "directions. ***")
+        print("The ball almost certainly ran into a wall during that pulse, so it")
+        print("could not travel the full distance. That SKEWS the axis map and makes")
+        print("the controller over-drive that axis (the wiggle/shake). Re-run with")
+        print("the ball in an OPEN area with ~80 mm of clear room in every direction")
+        print("before saving this map.")
+
     print("\nresponse matrix (board mm per unit command):")
     print(response.round(1))
 
