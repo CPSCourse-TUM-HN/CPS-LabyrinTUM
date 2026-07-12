@@ -11,6 +11,17 @@ from cps_maze.control.pid import (
 )
 
 
+def test_stall_kicker_ramp_is_capped():
+    # A long stall must not ramp the kick without bound: that launches the ball
+    # violently into an adjacent hole when it finally breaks free.
+    kicker = StallKicker(kick=0.3, speed_mm_s=8.0, min_duration_s=0.3,
+                         ramp_per_s=0.25, max_kick=0.7)
+    kick = 0.0
+    for _ in range(400):  # ~4 s of solid stall
+        kick = kicker.update(speed_mm_s=0.0, dt_s=0.016)
+    assert kick == 0.7  # capped, not 0.3 + 0.25 * ~3.4 s
+
+
 def test_stall_kicker_hysteresis_survives_noise_spikes():
     # Velocity-estimate noise flickers above the stall threshold while the
     # ball is physically parked. A naive timer resets on every flicker,

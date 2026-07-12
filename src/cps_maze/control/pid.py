@@ -25,12 +25,20 @@ class StallKicker:
     """
 
     def __init__(self, kick: float, speed_mm_s: float, min_duration_s: float,
-                 ramp_per_s: float = 0.0, release_factor: float = 2.0):
+                 ramp_per_s: float = 0.0, release_factor: float = 2.0,
+                 max_kick: float = float("inf")):
         self.kick = kick
         self.speed_mm_s = speed_mm_s
         self.min_duration_s = min_duration_s
         self.ramp_per_s = ramp_per_s
         self.release_factor = release_factor
+        # Cap the ramped kick. Unbounded, a long stall next to a hole ramps the
+        # kick very high (observed ~0.97), and when the ball finally breaks free
+        # it launches at 50-70 mm/s straight into the adjacent hole, too fast
+        # for the emergency brake to save 2-3 mm away. Capping trades "may need
+        # a manual nudge at a very stubborn spot" for "does not fling itself
+        # into a hole" - reliability over completion-at-all-costs.
+        self.max_kick = max_kick
         self.low_speed_time_s = 0.0
         self.last_kick = 0.0  # most recent kick magnitude (0 = not kicking)
 
@@ -55,7 +63,8 @@ class StallKicker:
             self.last_kick = 0.0
         else:
             stalled_for = self.low_speed_time_s - self.min_duration_s
-            self.last_kick = self.kick + self.ramp_per_s * stalled_for
+            self.last_kick = min(self.kick + self.ramp_per_s * stalled_for,
+                                 self.max_kick)
         return self.last_kick
 
 
@@ -81,6 +90,7 @@ class PathFollowerConfig:
     # easing toward a target); only a sustained stop is real static friction.
     stall_min_duration_s: float = 0.3
     stall_kick_ramp_per_s: float = 0.0  # escalate kick while stall persists
+    stall_kick_max: float = 1e9         # cap the ramped kick (breakaway violence)
 
 
 @dataclass
@@ -106,6 +116,7 @@ class VelocityFollowerConfig:
     # while braking into a corner; only a sustained stop is real stiction.
     stall_min_duration_s: float = 0.03
     stall_kick_ramp_per_s: float = 0.0  # escalate kick while stall persists
+    stall_kick_max: float = 1e9         # cap the ramped kick (breakaway violence)
     # Braking may exceed max_command up to this value (0 = same as
     # max_command). max_command is a gentleness cap for DRIVING; stopping a
     # fast ball needs the full tilt authority (firmware still clamps).
@@ -123,6 +134,7 @@ class VelocityPathFollower:
             speed_mm_s=config.stall_speed_mm_s,
             min_duration_s=config.stall_min_duration_s,
             ramp_per_s=config.stall_kick_ramp_per_s,
+            max_kick=config.stall_kick_max,
         )
 
     def reset(self) -> None:
@@ -200,6 +212,7 @@ class CarrotVelocityFollowerConfig:
     # Escalate the kick while the stall persists (per second of stall), so a
     # spot whose breakaway tilt exceeds stall_kick still gets un-stuck.
     stall_kick_ramp_per_s: float = 0.0
+    stall_kick_max: float = 1e9
     # Braking may exceed max_command up to this value (0 = same as
     # max_command). max_command is a gentleness cap for DRIVING; stopping a
     # fast ball needs the full tilt authority (firmware still clamps).
@@ -221,6 +234,7 @@ class CarrotVelocityPathFollower:
             speed_mm_s=config.stall_speed_mm_s,
             min_duration_s=config.stall_min_duration_s,
             ramp_per_s=config.stall_kick_ramp_per_s,
+            max_kick=config.stall_kick_max,
         )
 
     def reset(self) -> None:
@@ -290,6 +304,7 @@ class PathFollower:
             speed_mm_s=config.stall_speed_mm_s,
             min_duration_s=config.stall_min_duration_s,
             ramp_per_s=config.stall_kick_ramp_per_s,
+            max_kick=config.stall_kick_max,
         )
 
     def reset(self) -> None:

@@ -143,6 +143,13 @@ control:
   # toggle it on/off (the on/off toggling was visible as board jitter with
   # the ball sitting balanced).
   stall_kick_ramp_per_s: 0.25
+  # Cap on the ramped kick. Without it, a long stall next to a hole ramps the
+  # kick to ~1.0, and when the ball finally breaks free it launches at 50-70
+  # mm/s straight into the adjacent hole (this is how it fell into hole 4). The
+  # cap keeps a breakaway controlled: high enough to beat stiction at most
+  # spots (>0.4 breakaway), low enough that the ball does not fling itself into
+  # a hole. A very stubborn spot may need a manual nudge - that beats a fall.
+  stall_kick_max: 0.7
   # Max |servo command| change per second sent to hardware; smooths sudden
   # jumps (stiction kicks, re-association) so corners aren't punched through.
   command_slew_per_s: 4

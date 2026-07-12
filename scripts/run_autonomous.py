@@ -276,6 +276,7 @@ def main() -> None:
     stall_min_duration_s = float(config.control.get("stall_min_duration_s", 0.3))
     stall_speed_mm_s = float(config.control.get("stall_speed_mm_s", 8.0))
     stall_kick_ramp_per_s = float(config.control.get("stall_kick_ramp_per_s", 0.15))
+    stall_kick_max = float(config.control.get("stall_kick_max", 0.7))
     corner_noise_deg = float(config.control.get("corner_noise_deg", 6.0))
     corner_span_mm = float(config.control.get("corner_span_mm", 30.0))
 
@@ -397,6 +398,7 @@ def main() -> None:
         stall_dist_mm=float(config.control.get("stall_dist_mm", 8.0)),
         stall_min_duration_s=stall_min_duration_s,
         stall_kick_ramp_per_s=stall_kick_ramp_per_s,
+        stall_kick_max=stall_kick_max,
     ))
     velocity_follower = VelocityPathFollower(VelocityFollowerConfig(
         v_max_mm_s=v_max,
@@ -412,6 +414,7 @@ def main() -> None:
             "stall_request_speed_mm_s", 1.0)),
         stall_min_duration_s=stall_min_duration_s,
         stall_kick_ramp_per_s=stall_kick_ramp_per_s,
+        stall_kick_max=stall_kick_max,
         brake_max_command=brake_max_command,
         brake_cmd_per_mm_s=brake_cmd_per_mm_s,
         brake_cmd_floor=brake_cmd_floor,
@@ -428,6 +431,7 @@ def main() -> None:
             "stall_request_speed_mm_s", 1.0)),
         stall_min_duration_s=stall_min_duration_s,
         stall_kick_ramp_per_s=stall_kick_ramp_per_s,
+        stall_kick_max=stall_kick_max,
         brake_max_command=brake_max_command,
         brake_cmd_per_mm_s=brake_cmd_per_mm_s,
         brake_cmd_floor=brake_cmd_floor,
