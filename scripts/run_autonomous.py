@@ -72,21 +72,26 @@ def slew_limit_command(
     braking: bool,
     slow_per_s: float,
     fast_per_s: float,
+    fast_reduce: bool = True,
 ) -> np.ndarray:
-    """Per-axis slew limiting with an asymmetric rule: REDUCING a command's
-    magnitude is always safe and always uses the fast rate; only increasing
-    drive is limited gently.
+    """Per-axis slew limiting with an asymmetric rule: increasing drive is
+    limited gently, while braking and (when ``fast_reduce``) reducing a
+    command's magnitude use the fast rate.
 
-    Without this, a large stall-kick command unwinds at the slow driving
-    rate even while the ball is already overspeeding in the same direction
-    (dot(cmd, v) > 0, so the "braking" fast lane never engages) - observed
-    as the ball being pushed at +0.65 while at 4x the planned speed,
-    straight into a hole.
+    Fast reduction unwinds a large stall-kick command quickly when the ball is
+    already overspeeding in the same direction (dot(cmd, v) > 0, so the braking
+    fast lane never engages) - observed as the ball being pushed at +0.65 while
+    at 4x the planned speed, straight into a hole. But when the ball is STALLED
+    (fast_reduce=False) that same fast unwind collapses a breakaway kick tilt
+    before the servo can hold it, so the board only twitches and the ball never
+    accelerates. So the caller enables fast reduction only while the ball is
+    actually moving.
     """
     out = target.copy()
     for i in range(len(out)):
         reducing = abs(target[i]) < abs(prev[i])
-        rate = fast_per_s if (braking or reducing) else slow_per_s
+        use_fast = braking or (reducing and fast_reduce)
+        rate = fast_per_s if use_fast else slow_per_s
         step = rate * dt_s
         out[i] = prev[i] + float(np.clip(target[i] - prev[i], -step, step))
     return out
@@ -802,10 +807,23 @@ def main() -> None:
                         # steady corrections; never slam inside a hole pass
                         cap = min(cap, slowzone_max_command)
                     servo_cmd = np.clip(axis_map.apply(board_cmd), -cap, cap)
-                    if command_slew_per_s > 0.0 and dt_s > 0.0 and not emergency:
-                        servo_cmd = slew_limit_command(
-                            servo_cmd, prev_servo_cmd, dt_s, braking,
-                            command_slew_per_s, brake_slew_per_s)
+                    if not emergency and command_slew_per_s > 0.0:
+                        if dt_s > 0.0:
+                            # Fast-unwind a command only when the ball is
+                            # actually moving (could overspeed). While stalled,
+                            # let a breakaway kick HOLD its tilt so the servo
+                            # has time to move the ball instead of twitching.
+                            servo_cmd = slew_limit_command(
+                                servo_cmd, prev_servo_cmd, dt_s, braking,
+                                command_slew_per_s, brake_slew_per_s,
+                                fast_reduce=speed_now > 15.0)
+                        else:
+                            # Burst/duplicate frame (dt=0): no real time has
+                            # elapsed, so the command cannot legitimately change.
+                            # Hold the previous one - sending the full un-slewed
+                            # target here spiked the servo to ~0.5-0.7 for a
+                            # single frame, which the servo cannot follow.
+                            servo_cmd = prev_servo_cmd.copy()
                     prev_servo_cmd = servo_cmd.copy()
                     status = f"progress {progress:.0f}/{total_length:.0f} mm"
                     if hole_brake == "stabilize":

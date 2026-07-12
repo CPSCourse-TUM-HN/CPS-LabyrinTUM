@@ -2,7 +2,41 @@ import numpy as np
 
 from cps_maze.logging.run_logger import CsvRunLogger
 from cps_maze.planning.path import WaypointPath
-from scripts.run_autonomous import RUN_LOG_FIELDS, choose_carrot_point
+from scripts.run_autonomous import (
+    RUN_LOG_FIELDS,
+    choose_carrot_point,
+    slew_limit_command,
+)
+
+
+def test_slew_limits_increasing_drive_to_slow_rate():
+    # increasing magnitude uses the slow rate: 0 -> at most slow*dt in one step
+    out = slew_limit_command(
+        np.array([0.5, 0.0]), np.array([0.0, 0.0]), dt_s=0.016,
+        braking=False, slow_per_s=1.5, fast_per_s=12.0)
+    assert np.isclose(out[0], 1.5 * 0.016)  # 0.024, not the full 0.5
+
+
+def test_stalled_kick_tilt_is_not_fast_collapsed():
+    # A breakaway kick that drops (reducing magnitude) must HOLD when the ball
+    # is stalled (fast_reduce=False): it unwinds at the slow rate, not fast.
+    prev = np.array([0.55, 0.0])
+    target = np.array([0.08, 0.0])  # kick toggled off
+    slow = slew_limit_command(target, prev, dt_s=0.016, braking=False,
+                              slow_per_s=1.5, fast_per_s=12.0, fast_reduce=False)
+    fast = slew_limit_command(target, prev, dt_s=0.016, braking=False,
+                              slow_per_s=1.5, fast_per_s=12.0, fast_reduce=True)
+    # stalled: barely drops (holds the tilt); moving: collapses much faster
+    assert np.isclose(slow[0], 0.55 - 1.5 * 0.016)
+    assert fast[0] < slow[0] - 0.1
+
+
+def test_braking_always_uses_fast_rate():
+    # a command opposing motion (braking) still unwinds fast regardless
+    out = slew_limit_command(
+        np.array([0.0, 0.0]), np.array([0.5, 0.0]), dt_s=0.016,
+        braking=True, slow_per_s=1.5, fast_per_s=12.0, fast_reduce=False)
+    assert np.isclose(out[0], 0.5 - 12.0 * 0.016)
 
 
 class XLimitWallMap:
