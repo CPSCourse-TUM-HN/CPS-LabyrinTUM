@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+from collections import deque
 from ctypes import ArgumentError
 import time
 from pathlib import Path
@@ -352,6 +353,17 @@ def main() -> None:
     stabilize_max_s = float(config.control.get("stabilize_max_s", 2.0))
     stabilize_kp = float(config.control.get("stabilize_kp", 0.010))
     stabilize_kd = float(config.control.get("stabilize_kd", 0.012))
+    # Displacement-based unstick. The velocity-based stall kick cannot break the
+    # ball out of a tight corner: the ball twitches to ~10 mm/s in place, which
+    # resets the kick before it ramps, so the ball jitters forever. This detects
+    # stuck by ACTUAL net displacement over a window and ramps a sustained push
+    # toward the carrot until the ball genuinely moves.
+    unstick_enabled = bool(config.control.get("unstick_enabled", True))
+    unstick_window_s = float(config.control.get("unstick_window_s", 1.0))
+    unstick_dist_mm = float(config.control.get("unstick_dist_mm", 6.0))
+    unstick_base = float(config.control.get("unstick_base", 0.5))
+    unstick_ramp_per_s = float(config.control.get("unstick_ramp_per_s", 0.6))
+    unstick_max = float(config.control.get("unstick_max", 1.0))
     # The runtime wall speed-scale is OFF-route protection only; the speed
     # PROFILE already folds planned wall clearance into the on-route target.
     # Applying the runtime scale on-route double-counts it, and a dense mask
@@ -471,6 +483,8 @@ def main() -> None:
     stabilize_still = 0.0
     stabilize_entered = 0.0
     freeze_point = np.zeros(2)
+    pos_history: deque = deque()  # (timestamp, position) for unstick detection
+    unstick_time = 0.0
     outcome = "stopped by user"
 
     mouse_state: dict = {}
@@ -533,6 +547,8 @@ def main() -> None:
                     prev_servo_cmd = np.zeros(2)
                     recovery_low_speed_s = 0.0
                     stabilize_active = False
+                    unstick_time = 0.0
+                    pos_history.clear()
                     estimator.reset()
                     follower.reset()
                     velocity_follower.reset()
@@ -800,6 +816,42 @@ def main() -> None:
                                     board_cmd = board_cmd * (hold_cap / m)
                                 hole_brake = "stabilize"
 
+                    # Displacement-based UNSTICK: at a tight corner the ball
+                    # twitches to ~10 mm/s in place, which the velocity-based
+                    # stall kick reads as "moving" and keeps resetting, so the
+                    # kick never ramps and the ball jitters forever. Velocity
+                    # cannot tell twitching-in-place from slow rolling, so detect
+                    # stuck by ACTUAL net displacement over a window and ramp a
+                    # sustained push toward the carrot until the ball truly moves.
+                    unstick_now = 0.0
+                    if unstick_enabled and not emergency and not stabilize_active:
+                        pos_history.append((frame.timestamp_s,
+                                            state.position_mm.copy()))
+                        while (len(pos_history) >= 2
+                               and frame.timestamp_s - pos_history[0][0]
+                               > unstick_window_s):
+                            pos_history.popleft()
+                        span = frame.timestamp_s - pos_history[0][0]
+                        net_disp = float(np.linalg.norm(
+                            state.position_mm - pos_history[0][1]))
+                        if (span >= 0.8 * unstick_window_s
+                                and net_disp < unstick_dist_mm
+                                and target_speed > 2.0):
+                            unstick_time += max(dt_s, 0.0)
+                            unstick_now = min(
+                                unstick_base + unstick_ramp_per_s * unstick_time,
+                                unstick_max)
+                            to_target = target - state.position_mm
+                            n = float(np.linalg.norm(to_target))
+                            if n > 1e-6:
+                                board_cmd = unstick_now * (to_target / n)
+                                hole_brake = "unstick"
+                        else:
+                            unstick_time = 0.0
+                    else:
+                        unstick_time = 0.0
+                        pos_history.clear()
+
                     # a command opposing the motion is a brake: allow the
                     # full tilt range and a faster slew (stopping a fast
                     # ball cannot wait for the gentle driving ramp)
@@ -846,9 +898,11 @@ def main() -> None:
                         status += "  STABILIZING"
                     elif hole_brake == "emergency":
                         status += "  EMERGENCY BRAKE"
+                    elif hole_brake == "unstick":
+                        status += f"  UNSTICK {unstick_now:.2f}"
                     elif hole_brake == "slow":
                         status += "  hole ahead"
-                    if stall_kick_now > 0.0:
+                    if stall_kick_now > 0.0 and hole_brake != "unstick":
                         status += f"  KICK {stall_kick_now:.2f}"
                     if float(np.linalg.norm(wall_escape)) > 1e-9:
                         status += "  wall escape"
@@ -891,6 +945,8 @@ def main() -> None:
                     prev_servo_cmd = np.zeros(2)
                     recovery_low_speed_s = 0.0
                     stabilize_active = False
+                    unstick_time = 0.0
+                    pos_history.clear()
                     estimator.reset()
                     follower.reset()
                     velocity_follower.reset()

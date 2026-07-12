@@ -155,6 +155,19 @@ control:
   # cap (0.7) left it stuck there. The firmware clamps to 1.0 anyway, so this
   # does not reduce the tilt that actually reaches the servos.
   stall_kick_max: 1.0
+  # --- Displacement-based unstick (corner escape) ---
+  # The velocity-based stall kick cannot free the ball from a tight corner: the
+  # ball twitches to ~10 mm/s in place, which resets the kick before it ramps,
+  # so it jitters forever (observed stuck 96% of a run at the first turn). This
+  # detects stuck by ACTUAL net displacement over a window (velocity cannot tell
+  # twitching-in-place from slow rolling) and ramps a sustained push toward the
+  # carrot until the ball genuinely moves.
+  unstick_enabled: true
+  unstick_window_s: 1.0    # window over which net displacement is measured
+  unstick_dist_mm: 6.0     # moved less than this over the window = stuck
+  unstick_base: 0.5        # initial push once stuck
+  unstick_ramp_per_s: 0.6  # escalate the push per second still stuck ...
+  unstick_max: 1.0         # ... up to this (full tilt for the worst corners)
   # Max |servo command| change per second sent to hardware; smooths sudden
   # jumps (stiction kicks, re-association) so corners aren't punched through.
   command_slew_per_s: 4
