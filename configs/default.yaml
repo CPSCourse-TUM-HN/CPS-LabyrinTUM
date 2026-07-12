@@ -233,6 +233,12 @@ control:
   wall_escape_speed_mm_s: 15.0
   wall_escape_command: 0.22
   wall_escape_min_command: 0.08
+  # The runtime wall speed-scale is OFF-route protection ONLY, applied once the
+  # ball drifts more than this off the centerline. The speed profile already
+  # slows for planned wall clearance on-route; applying the runtime scale
+  # on-route too double-counts it, and a dense/over-marked wall mask then
+  # crushed the on-route speed to a crawl and parked the ball at the start.
+  wall_scale_cross_track_mm: 8.0
   # Local recovery planner: when the ball is off-route, stalled, or the
   # marker is across a wall, plan a temporary A* path from the actual ball
   # position to the current carrot/marker through wall- and hole-safe space.

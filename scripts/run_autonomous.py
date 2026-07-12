@@ -345,6 +345,14 @@ def main() -> None:
     stabilize_max_s = float(config.control.get("stabilize_max_s", 2.0))
     stabilize_kp = float(config.control.get("stabilize_kp", 0.010))
     stabilize_kd = float(config.control.get("stabilize_kd", 0.012))
+    # The runtime wall speed-scale is OFF-route protection only; the speed
+    # PROFILE already folds planned wall clearance into the on-route target.
+    # Applying the runtime scale on-route double-counts it, and a dense mask
+    # then crushes the on-route speed to a crawl (observed: 0.35 scale parked
+    # the ball at the start). Only let it act once the ball is this far off the
+    # centerline.
+    wall_scale_cross_track_mm = float(
+        config.control.get("wall_scale_cross_track_mm", 8.0))
 
     # One coherent speed PLAN for the whole route, computed once: hole
     # passes get a committed moderate speed (not a crawl), every slowdown
@@ -583,11 +591,17 @@ def main() -> None:
                     elif speed_now < recovery_stall_speed_mm_s and dt_s > 0.0:
                         recovery_low_speed_s += dt_s
 
-                    # Runtime wall scale stays as OFF-route protection (the
-                    # profile only knows centerline clearances); on-route the
-                    # two agree, so min() introduces no discontinuity.
-                    wall_scale = (wall_map.speed_scale(board_xy)
-                                  if wall_map is not None else 1.0)
+                    # Runtime wall scale is OFF-route protection ONLY. The
+                    # profile already handles planned wall clearance on-route;
+                    # applying the runtime scale on-route too double-counts it,
+                    # and a dense/over-marked mask then crushes the on-route
+                    # speed to a crawl (observed: 0.35 scale parked the ball at
+                    # the start). On-route trust the profile; slow near walls
+                    # only once the ball has drifted off the centerline.
+                    wall_scale = 1.0
+                    if (wall_map is not None
+                            and float(cross) > wall_scale_cross_track_mm):
+                        wall_scale = wall_map.speed_scale(board_xy)
                     speed_scale = min(wall_scale, profile_scale)
 
                     if mode == "velocity":

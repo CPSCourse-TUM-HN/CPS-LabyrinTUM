@@ -50,21 +50,37 @@ def _frame_bytes(width: int, height: int, channels: int) -> int:
 class SharedFrameWriter:
     """Server side: create the block and publish frames into it."""
 
-    def __init__(self, width: int, height: int, channels: int = 3):
+    def __init__(self, width: int, height: int, channels: int = 3,
+                 name: str = SHM_NAME):
         if shared_memory is None:
             raise RuntimeError("multiprocessing.shared_memory unavailable")
+        self.name = name
         self.width = int(width)
         self.height = int(height)
         self.channels = int(channels)
         size = _HEADER_SIZE + _frame_bytes(width, height, channels)
-        # Drop any stale block left by a crashed server before recreating.
+        # Best-effort remove a stale block first: on POSIX unlink() frees it so
+        # we recreate cleanly. On Windows unlink() is a no-op and the block
+        # lingers until its creating process exits, so a crashed/zombie server
+        # can leave one behind - in that case reuse it (below) instead of
+        # crashing.
         try:
-            stale = shared_memory.SharedMemory(name=SHM_NAME)
+            stale = shared_memory.SharedMemory(name=name)
             stale.close()
             stale.unlink()
         except FileNotFoundError:
             pass
-        self.shm = shared_memory.SharedMemory(name=SHM_NAME, create=True, size=size)
+        except Exception:
+            pass
+        try:
+            self.shm = shared_memory.SharedMemory(name=name, create=True, size=size)
+        except FileExistsError:
+            self.shm = shared_memory.SharedMemory(name=name)  # reuse existing
+            if self.shm.size < size:
+                self.shm.close()
+                raise RuntimeError(
+                    "existing shared camera block is too small to reuse; "
+                    "stop the other camera_server process first")
         self._seq = 0
         struct.pack_into(_META_FMT, self.shm.buf, _META_OFF,
                          _MAGIC, self.width, self.height, self.channels)
@@ -101,10 +117,11 @@ class SharedFrameWriter:
 class SharedFrameReader:
     """Client side: attach to the block and copy out the latest frame."""
 
-    def __init__(self) -> None:
+    def __init__(self, name: str = SHM_NAME) -> None:
         if shared_memory is None:
             raise RuntimeError("multiprocessing.shared_memory unavailable")
-        self.shm = shared_memory.SharedMemory(name=SHM_NAME)  # raises if absent
+        self.name = name
+        self.shm = shared_memory.SharedMemory(name=name)  # raises if absent
         magic, w, h, c = struct.unpack_from(_META_FMT, self.shm.buf, _META_OFF)
         if magic != _MAGIC:
             self.shm.close()
@@ -146,7 +163,7 @@ class SharedFrameReader:
             pass
 
 
-def server_running(heartbeat_s: float = 0.0) -> bool:
+def server_running(heartbeat_s: float = 0.0, name: str = SHM_NAME) -> bool:
     """True if a shared camera block exists (and, if heartbeat_s>0, is live).
 
     Attaching fails fast when no server is up, so this is cheap to call from
@@ -158,7 +175,7 @@ def server_running(heartbeat_s: float = 0.0) -> bool:
     if shared_memory is None:
         return False
     try:
-        shm = shared_memory.SharedMemory(name=SHM_NAME)
+        shm = shared_memory.SharedMemory(name=name)
     except FileNotFoundError:
         return False
     except Exception:
