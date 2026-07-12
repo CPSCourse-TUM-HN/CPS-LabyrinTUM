@@ -110,7 +110,13 @@ control:
   corner_noise_deg: 12.0
   k_lat: 1.6             # pull toward centerline (per mm of cross-track)
   lat_v_max_mm_s: 18.0
-  k_vel: 0.012           # tilt per mm/s of velocity error
+  # tilt per mm/s of velocity error. Raised from 0.012: at 0.012 the driving
+  # tilt maxed at 0.012*15 = 0.18, far below the ~0.4-1.0 this ball needs to
+  # move, so pitch/yaw did nothing and ONLY the stall-kick ever moved the ball.
+  # At 0.04 the driving tilt reaches ~0.6 when stalled, so the actual control
+  # drives the ball (and brakes harder when overspeeding). Raise toward 0.06 if
+  # driving still can't move it; lower if it oscillates once rolling.
+  k_vel: 0.04
   carrot_lookahead_mm: 20
   carrot_min_lookahead_mm: 4.0
   lookahead_mm: 18.0
@@ -125,7 +131,7 @@ control:
   # target, the command is scaled up to at least this magnitude - but only
   # once low speed has PERSISTED (a single slow frame also happens during
   # ordinary braking into a corner, which is not stiction).
-  stall_kick: 0.30
+  stall_kick: 0.45
   # MUST stay below the speed profile's minimum (the runner clamps it if
   # not): planned slow rolling through a hole pass must never be mistaken
   # for a stall, or the kick launches the ball exactly where the plan wants
@@ -143,13 +149,12 @@ control:
   # toggle it on/off (the on/off toggling was visible as board jitter with
   # the ball sitting balanced).
   stall_kick_ramp_per_s: 0.25
-  # Cap on the ramped kick. Without it, a long stall next to a hole ramps the
-  # kick to ~1.0, and when the ball finally breaks free it launches at 50-70
-  # mm/s straight into the adjacent hole (this is how it fell into hole 4). The
-  # cap keeps a breakaway controlled: high enough to beat stiction at most
-  # spots (>0.4 breakaway), low enough that the ball does not fling itself into
-  # a hole. A very stubborn spot may need a manual nudge - that beats a fall.
-  stall_kick_max: 0.7
+  # Cap on the ramped kick, mostly to stop the ramp running away to absurd
+  # values on a long stall. Set to full command authority (1.0) because this
+  # ball needs up to full tilt to break free at the stubborn spots - a lower
+  # cap (0.7) left it stuck there. The firmware clamps to 1.0 anyway, so this
+  # does not reduce the tilt that actually reaches the servos.
+  stall_kick_max: 1.0
   # Max |servo command| change per second sent to hardware; smooths sudden
   # jumps (stiction kicks, re-association) so corners aren't punched through.
   command_slew_per_s: 4
