@@ -66,12 +66,36 @@ sophisticated one that is not.
 ### The camera is not a constant
 The OS camera index changed between reboots and USB ports, so scripts
 sometimes silently opened the laptop webcam or a virtual camera instead of
-the maze camera. The default Windows capture backend also took tens of
-seconds to open the camera, and the default uncompressed mode silently
-capped the frame rate. Auto-exposure made the first frames of every capture
-too dark for brightness-based seeding. Resolutions: per-machine config
-overlay for the device index, DirectShow backend and MJPG mode on Windows,
-and never seeding from the first frames of a stream.
+the maze camera. Auto-exposure made the first frames of every capture too
+dark for brightness-based seeding. Resolutions: a per-machine config overlay
+for the device index, and never seeding from the first frames of a stream.
+The capture backend and frame rate turned out to be a much larger problem in
+their own right, described next.
+
+### The camera was silently running at a tenth of its frame rate
+The camera is rated 120 fps at 1280x800 but was delivering about ten.
+Profiling ruled out the tracker, the overlay drawing, and the serial write
+(all together under ten milliseconds); the missing eighty-odd milliseconds per
+iteration was the frame read itself, blocking while it waited for the camera.
+On Windows the default DirectShow backend exposed only the camera's
+uncompressed mode, whose bandwidth over USB 2 caps 1280x800 at about ten
+frames per second, and this particular camera would not negotiate a compressed
+mode at all. An earlier belief that selecting a compressed format had fixed the
+frame rate was simply wrong; the format was never actually accepted. The fix
+was to switch to the Media Foundation backend, which selects the camera's
+native high-rate mode and delivers the full 120 fps at full resolution with no
+loss of resolution, at the cost of a slow one-time open. Lesson: a driver
+reporting a frame rate is not the same as delivering it, so measure the achieved
+rate; and the capture backend is a first-class design parameter, not a detail.
+
+### Opening the camera once and sharing it
+Because the high-rate backend is slow to open (tens of seconds), paying that
+cost in every calibration and test script made iteration painful. A small
+camera-server process now opens the device once and publishes each frame into
+shared memory; every other tool attaches to it in milliseconds and falls back
+to opening the device directly when the server is not running. As a side
+benefit the server timestamps each frame at capture time, which removed a class
+of phantom velocity spikes described in the perception section.
 
 ## 3. Perception
 
@@ -97,7 +121,84 @@ bridged by the highlight cue and short constant-velocity prediction, and
 lighting must keep the glint above the specular threshold, which varied
 between lab sessions and needed re-measurement.
 
+### Phantom velocities from burst-delivered frames
+Once the camera ran at its true rate, it occasionally delivered two frames a
+fraction of a millisecond apart. The velocity estimate, a finite difference of
+position over time, then divided a sub-millimetre detection jitter by a
+near-zero time step and reported impossible speeds of several hundred
+millimetres per second. Those spikes tripped the safety logic (emergency
+braking and the composure state) continually, which held the ball in place and
+prevented any progress - and looked, misleadingly, like a control failure.
+Resolution: the estimator ignores the velocity contribution of frames closer
+together than a minimum time step and clamps any single measured velocity above
+a physical ceiling before it enters the smoothing filter. Lesson: a
+finite-difference derivative is only as trustworthy as its timestamps.
+
 ## 4. Planning and control
+
+### The "unstabilizable" ball was a ten-hertz control loop
+For a long stretch the controller could not hold the ball steady: it rang and
+oscillated around every target, and effort went into control gains, braking
+authority, and a stabilization state, none of which helped much. The run logs
+eventually showed the real cause: the control loop was executing at about ten
+iterations per second, not the camera's rated 120. At that rate the ball moves
+several millimetres between updates and the velocity estimate lags a full
+frame, so any controller over-corrects and rings; the instability was a
+sampling-rate problem, not a gains problem, and the root cause was the camera
+frame-rate issue described in the calibration section. Lesson: before tuning a
+controller, confirm the loop is actually running at the rate it assumes, because
+an undersampled loop cannot be stabilized by any choice of gains.
+
+### The wall mask parked the ball at the start
+A freshly regenerated wall mask silently stopped the ball from ever leaving the
+start. The runtime wall-proximity speed limit, intended as protection for when
+the ball drifts off the route, was also being applied while the ball was on the
+route, where it double-counted the wall clearance already folded into the
+precomputed speed plan. With a dense mask it throttled the on-route target speed
+to about a third, the controller judged the barely-creeping ball to be near its
+target, and it never commanded enough tilt to actually move. Resolution: the
+runtime wall speed limit now applies only once the ball has drifted off the
+centerline; on the route the precomputed plan alone governs speed. Lesson: two
+mechanisms that each cap the same quantity must not silently compose.
+
+### Composure: stopping instead of chasing after a disturbance
+When a hard brake or a disturbance briefly made the ball fast and unstable, the
+follower kept demanding forward progress, which fed the oscillation and drove
+the ball into holes. A composure state was added: on a genuine runaway the
+controller stops pursuing progress, holds position and damps the ball, and
+resumes only once it is back under control. Tuning it was itself a struggle -
+an early version triggered on ordinary overshoot and on the phantom velocity
+spikes described earlier, so it was active for most of a run and froze the ball
+in place; it was then narrowed to fire only on a real runaway (speed far above
+the plan) and to release as soon as the ball settles rather than after a fixed
+hold.
+
+### An oblique view of the walls fires false wall contacts
+The overhead camera views the walls at an angle, so a ball near a wall can
+appear to be touching it when it is not. A local replanner that rerouted the
+ball whenever its line of sight to the next waypoint looked wall-blocked
+therefore triggered constantly on false contacts and hijacked the intended
+path. It was disabled by default; ordinary path following, the off-route wall
+slowdown, and the emergency brake cover recovery without it. Lesson: a
+perception input that is known to be geometrically unreliable should not be
+allowed to gate an aggressive automatic action.
+
+### Backlash in one axis masqueraded as a weak axis
+Returning to the asymmetric-linkage problem with better instrumentation: one
+pitch direction consistently measured about half the ball displacement of the
+others during axis calibration, and the calibration faithfully recorded that,
+producing a map that boosted the axis to compensate. On the rig the axis then
+over-drove and oscillated. Driving the servo directly, bypassing the
+controller, revealed the true cause: the pitch linkage had backlash, so small
+commands were absorbed by mechanical slop and produced no motion at all, and
+only a large command suddenly broke through and lurched the ball. A calibration
+that faithfully measures a mechanically broken axis produces a faithfully wrong
+map, and no software correction can recover the lost authority. The software
+change is only diagnostic - the calibration tool now warns when one direction
+moves far less than the others, which almost always means the ball hit a wall
+during that pulse or the linkage has slop - and the mechanical slack must be
+removed. Lesson: distrust an asymmetric calibration result and inspect the
+mechanism before trusting the numbers.
 
 ### Pure position control parks the ball short
 With proportional-derivative position control, the commanded tilt shrinks as
@@ -168,4 +269,13 @@ reported detection rate, progress reached, cross-track error statistics, and
 stall episodes located by path position. Several supposed "controller
 problems" turned out to be a too-low command cap, a wrong corridor
 association, or a tracking dropout - all visible in the logs and invisible
-to the eye.
+to the eye. This pattern recurred repeatedly and became the strongest lesson
+of the project: an apparent control failure was, in turn, a ten-hertz control
+loop caused by a mis-negotiated camera mode, phantom velocities caused by
+near-zero frame time steps, an invisible speed wall caused by a wall mask
+applied on the route, and a wiggling axis caused by mechanical backlash. In
+each case the fix followed directly from a measurement (loop rate, frame time
+steps, the runtime speed scale, direct servo-response amplitudes) and would
+have been nearly impossible to reach by watching the ball. The recurring trap
+was attributing an infrastructure or hardware fault to the controller; the
+recurring remedy was to instrument the suspected layer and read the number.

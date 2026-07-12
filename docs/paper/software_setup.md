@@ -81,7 +81,12 @@ all live tools):
   short gaps are bridged by constant-velocity prediction.
 - Seeding policy for demos: click-to-seed. The operator clicks the ball in
   the live window; automatic seeding exists but is not relied on.
-- Ball velocity is estimated with a low-pass filtered finite difference.
+- Ball velocity is estimated with a low-pass filtered finite difference,
+  guarded against the two failure modes of a naive difference: the velocity
+  contribution of frames delivered too close together in time is ignored (a
+  near-zero time step would otherwise manufacture an enormous speed), and any
+  single measured velocity above a physical ceiling is clamped before it enters
+  the filter (a one-frame detection jump is a tracker artifact, not motion).
 
 ## 5. Planning and path following (structure)
 
@@ -96,9 +101,10 @@ all live tools):
   sight from the ball crosses a wall are rejected outright.
 - Path curvature ahead of the ball is measured as accumulated absolute
   turning (not endpoint tangent difference, which cancels in chicanes) and
-  is used to slow the ball before corners. Wall proximity, from a
-  precomputed distance transform, imposes an additional slowdown near
-  walls.
+  is used to slow the ball before corners. Planned wall clearance along the
+  route is folded into a precomputed speed profile; a separate runtime
+  slowdown from the wall distance transform applies only when the ball has
+  drifted off the centerline, so the two do not double-count on the route.
 
 ## 6. Control and safety (structure)
 
@@ -110,6 +116,11 @@ all live tools):
 - Static friction is compensated explicitly: below a measurable tilt the
   ball does not move at all, so a sustained commanded-but-not-moving state
   triggers a breakaway command floor.
+- Composure: on a genuine runaway (speed far above the plan, or after an
+  emergency brake) the controller stops pursuing progress, holds position and
+  damps the ball, and resumes path following only once it has settled. This
+  prevents the disturbance-chasing oscillation that otherwise drives a
+  briefly-fast ball into a hole.
 - Safety layers, all active in every run:
   - commands are clamped to a configurable cap and rate-limited (slew)
     before reaching hardware;
@@ -152,9 +163,15 @@ all live tools):
   `scripts/` and a pytest suite under `tests/` covering the pure logic
   (controllers, path association, curvature, calibration mappings, wall
   map, tracker behavior).
-- Camera capture is cross-platform (DirectShow backend on Windows for fast
-  open, MJPG mode for full frame rate, single-frame buffer so the control
-  loop always acts on the newest frame).
+- Camera capture is cross-platform. On Windows the Media Foundation backend is
+  used, which is the only backend that negotiates the camera's native high-rate
+  mode and delivers the full 120 fps at 1280x800 (the default DirectShow
+  backend exposed only an uncompressed mode capped near 10 fps). Its slow
+  one-time open is amortized by an optional camera-server process that opens the
+  device once and publishes frames into shared memory, so every calibration and
+  test tool attaches instantly and reads frames stamped with their true capture
+  time; tools fall back to opening the device directly when no server is
+  running.
 - Machine-specific settings (serial port, camera device index) live in a
   gitignored `configs/local.yaml` overlay; shared configuration lives in
   `configs/default.yaml`.
