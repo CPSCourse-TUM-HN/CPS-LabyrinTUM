@@ -217,6 +217,20 @@ control:
   # near holes are small and steady - control, not violent avoidance.
   plan_latency_s: 0.35
   slowzone_max_command: 0.55
+  # Startup danger check: holes the ROUTE passes close to (route_hole_proximity)
+  # that the ball's normal wobble can reach even though the centerline stays out
+  # of the capture zone - hole 4 in the U-turn is the canonical case (~4 mm
+  # clear). The runner warns at startup and crawls the plan to hole_danger_pass
+  # within hole_danger_band of each such pass, so the ball creeps past under
+  # tight control instead of arriving hot and getting sucked in.
+  # A hole is flagged only if the route passes close AND turns sharply there
+  # (the ball is flung into a hole at a corner it can't make, not on a straight).
+  # On this route that isolates 3 real spots incl. hole 4's 61 deg U-turn,
+  # instead of the 16 holes proximity alone flags.
+  hole_danger_margin_mm: 6.0   # flag if route clears the capture zone by < this
+  hole_danger_turn_deg: 40.0   # ...and turns at least this much at the closest point
+  hole_danger_pass_mm_s: 8.0   # crawl speed through a flagged danger pass
+  hole_danger_band_mm: 18.0    # apply the crawl within this much of the closest point
   # Velocity smoothing time constant (seconds). FRAME-RATE INVARIANT: the
   # estimator uses an effective per-frame factor dt/(tau+dt), so the real-time
   # smoothing is the same at 10 fps or 120 fps. This matters a lot: velocity is

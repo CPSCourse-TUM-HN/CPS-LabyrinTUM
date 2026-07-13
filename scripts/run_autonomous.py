@@ -47,7 +47,7 @@ from cps_maze.planning.recovery_astar import (
     RecoveryAStarPlanner,
     progress_limited_point_along_polyline,
 )
-from cps_maze.planning.speed_profile import build_speed_profile
+from cps_maze.planning.speed_profile import build_speed_profile, route_hole_proximity
 from cps_maze.planning.walls import WallMap
 from cps_maze.vision.ball_pipeline import make_tracker
 from cps_maze.vision.state_estimator import LowPassVelocityEstimator
@@ -440,6 +440,32 @@ def main() -> None:
     # (forward pass). Replaces the per-frame reactive hole cap, whose
     # interaction with the stall kick caused the ball to "spazz" at
     # overlapping capture zones.
+    # Startup danger check: which holes does the ROUTE pass close enough to that
+    # the ball's normal wobble can reach them (e.g. hole 4 in the U-turn)? Warn
+    # the operator and crawl the plan through each such pass.
+    danger_margin_mm = float(config.control.get("hole_danger_margin_mm", 6.0))
+    danger_turn_deg = float(config.control.get("hole_danger_turn_deg", 40.0))
+    danger_pass_mm_s = float(config.control.get("hole_danger_pass_mm_s", 8.0))
+    danger_band_mm = float(config.control.get("hole_danger_band_mm", 18.0))
+    danger_spots = route_hole_proximity(
+        path, holes,
+        ball_radius_mm=float(config.control.get("ball_radius_mm", 4.0)),
+        margin_mm=float(config.control.get("hole_margin_mm", 2.0)),
+        danger_margin_mm=danger_margin_mm,
+        danger_turn_deg=danger_turn_deg,
+        corner_span_mm=corner_span_mm,
+        corner_noise_deg=corner_noise_deg,
+    )
+    if danger_spots:
+        print(f"!! {len(danger_spots)} high-risk hole(s): route passes close AT A "
+              f"SHARP TURN (overshoot risk) - crawling the plan to "
+              f"{danger_pass_mm_s:.0f} mm/s within {danger_band_mm:.0f} mm of each:")
+        for sp in danger_spots:
+            print(f"     hole idx{sp['hole_index']} @ progress {sp['progress_mm']:.0f}mm: "
+                  f"{sp['center_dist_mm']:.1f}mm from center "
+                  f"({sp['clearance_mm']:+.1f}mm clear), turn {sp['turn_deg']:.0f} deg")
+    danger_zones = [(sp["progress_mm"], danger_band_mm, danger_pass_mm_s)
+                    for sp in danger_spots]
     profile = build_speed_profile(
         path, hole_map, wall_map,
         v_max_mm_s=v_max,
@@ -452,6 +478,7 @@ def main() -> None:
         corner_min_frac=float(config.control.get("min_speed_frac", 0.25)),
         accel_mm_s2=hole_brake_accel,
         end_speed_mm_s=float(config.control.get("end_speed_mm_s", 10.0)),
+        danger_zones=danger_zones,
     )
     print(profile.summary())
     # Planned slow rolling must NEVER be mistaken for a stall, or the kick

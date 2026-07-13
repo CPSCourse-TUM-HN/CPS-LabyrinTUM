@@ -86,3 +86,41 @@ def test_profile_on_real_maze_has_no_stall_trap():
     dv2 = np.diff(v ** 2)
     limit = 2.0 * 118.0 * profile.step_mm + 1e-6
     assert np.all(np.abs(dv2) <= limit)
+
+
+def test_route_hole_proximity_flags_close_hole_at_a_turn():
+    import numpy as np
+    from cps_maze.planning.path import WaypointPath
+    from cps_maze.planning.speed_profile import route_hole_proximity
+    # route: straight in +x to (30,0), then a 90 deg turn to +y. A hole beside
+    # the +x leg has its closest approach on the straight; the turn is caught
+    # only when it lies AHEAD within the corner span (like hole 4's U-turn).
+    pts = np.array([[0, 0], [30, 0], [30, 30]], dtype=float)
+    path = WaypointPath(pts)
+    holes = np.array([[10.0, 7.0, 3.0],    # far before the turn -> no turn ahead
+                      [20.0, 7.0, 3.0]])    # just before the turn -> turn ahead
+    spots = route_hole_proximity(path, holes, ball_radius_mm=4.0, margin_mm=2.0,
+                                 danger_margin_mm=6.0, danger_turn_deg=40.0,
+                                 corner_span_mm=15.0)
+    flagged = {s["hole_index"] for s in spots}
+    assert 1 in flagged            # close + turn ahead -> danger
+    assert 0 not in flagged        # close but no turn ahead -> not flagged
+
+
+def test_route_hole_proximity_none_when_no_holes():
+    import numpy as np
+    from cps_maze.planning.path import WaypointPath
+    from cps_maze.planning.speed_profile import route_hole_proximity
+    path = WaypointPath(np.array([[0, 0], [50, 0]], dtype=float))
+    assert route_hole_proximity(path, np.zeros((0, 3)), 4.0, 2.0) == []
+
+
+def test_danger_zone_caps_profile_speed_below_floor():
+    import numpy as np
+    from cps_maze.planning.path import WaypointPath
+    from cps_maze.planning.speed_profile import build_speed_profile
+    path = WaypointPath(np.array([[0, 0], [200, 0]], dtype=float))
+    prof = build_speed_profile(path, None, None, v_max_mm_s=25, floor_mm_s=15,
+                               danger_zones=[(100.0, 15.0, 8.0)])
+    assert prof.speed_at(100.0) <= 8.0 + 1e-6   # crawl at the danger center
+    assert prof.speed_at(0.0) > 8.0             # full speed away from it

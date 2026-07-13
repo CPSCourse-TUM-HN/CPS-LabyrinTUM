@@ -57,6 +57,60 @@ class SpeedProfile:
                 f"max {s.max():.0f} mm/s")
 
 
+def route_hole_proximity(
+    path,
+    holes: np.ndarray,
+    ball_radius_mm: float,
+    margin_mm: float,
+    danger_margin_mm: float = 6.0,
+    danger_turn_deg: float = 40.0,
+    corner_span_mm: float = 15.0,
+    corner_noise_deg: float = 12.0,
+    step_mm: float = 2.0,
+) -> list[dict]:
+    """Startup check: which holes is the ball actually at risk of falling into?
+
+    On a dense board the route threads within the ball's wobble range of MOST
+    holes, so proximity alone flags almost everything. The real fall risk is a
+    hole the route passes close to AND at a sharp TURN: there the ball, carrying
+    too much speed, cannot make the corner and is flung into the hole sitting in
+    the crook - exactly hole 4's U-turn. So a hole is flagged only when BOTH:
+
+      * the route's closest approach clears the capture zone (hole radius + ball
+        radius + margin) by less than ``danger_margin_mm``, and
+      * the route turns at least ``danger_turn_deg`` at that closest point.
+
+    Returns dicts {hole_index, progress_mm, center_dist_mm, clearance_mm,
+    turn_deg}, least clearance first.
+    """
+    holes = np.asarray(holes, dtype=float).reshape(-1, 3)
+    if not len(holes):
+        return []
+    total = float(path.cumulative_lengths[-1])
+    n = max(int(np.ceil(total / step_mm)) + 1, 2)
+    progs = np.minimum(np.arange(n) * step_mm, total)
+    pts = np.array([path.point_at_progress_mm(s) for s in progs])
+    out: list[dict] = []
+    for hi in range(len(holes)):
+        hx, hy, hr = holes[hi]
+        d = np.hypot(pts[:, 0] - hx, pts[:, 1] - hy)
+        j = int(np.argmin(d))
+        center_dist = float(d[j])
+        clearance = center_dist - (hr + ball_radius_mm + margin_mm)
+        turn = float(path.heading_change_deg(
+            float(progs[j]), span_mm=corner_span_mm, noise_deg=corner_noise_deg))
+        if clearance <= danger_margin_mm and turn >= danger_turn_deg:
+            out.append({
+                "hole_index": hi,
+                "progress_mm": float(progs[j]),
+                "center_dist_mm": center_dist,
+                "clearance_mm": clearance,
+                "turn_deg": turn,
+            })
+    out.sort(key=lambda s: s["clearance_mm"])
+    return out
+
+
 def build_speed_profile(
     path,
     hole_map=None,
@@ -73,6 +127,7 @@ def build_speed_profile(
     accel_mm_s2: float = 150.0,
     end_speed_mm_s: float = 10.0,
     step_mm: float = 2.0,
+    danger_zones: list[tuple[float, float, float]] | None = None,
 ) -> SpeedProfile:
     total = float(path.cumulative_lengths[-1])
     n = max(int(np.ceil(total / step_mm)) + 1, 2)
@@ -104,6 +159,15 @@ def build_speed_profile(
                             hole_pass_mm_s + t * (v_max_mm_s - hole_pass_mm_s))
 
         limits[i] = max(limit, floor_mm_s)
+
+        # danger zones: holes the ROUTE passes close to (route_hole_proximity).
+        # Applied AFTER the floor so the ball is deliberately crawled through
+        # the danger pass - the one place a below-floor speed is warranted,
+        # because the ball's wobble at normal speed reaches the capture zone.
+        if danger_zones:
+            for dprog, dband, dspeed in danger_zones:
+                if abs(s - dprog) <= dband:
+                    limits[i] = min(limits[i], dspeed)
 
     limits[-1] = min(limits[-1], end_speed_mm_s)  # arrive gently at the goal
 
