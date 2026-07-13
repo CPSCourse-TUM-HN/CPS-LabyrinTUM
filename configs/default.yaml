@@ -232,6 +232,15 @@ control:
   # near holes are small and steady - control, not violent avoidance.
   plan_latency_s: 0.35
   slowzone_max_command: 0.55
+  # Wall-hug detour zones: shift the carrot perpendicular to the path so the ball
+  # routes along the wall AROUND a hole the route grazes, then rejoins before the
+  # next hole. offset_mm is along the path's left-normal [-tan_y, tan_x]; ramp_mm
+  # eases on/off. Hole 5 (idx11 @ route ~374) sits on the RIGHT of a downhill
+  # descent with >24 mm open on the LEFT, so a +10 mm left offset over the
+  # descent hugs the wall ~23 mm clear of the hole (was ~12 mm) and rejoins by
+  # ~393 mm, before hole 6.
+  lateral_offset_zones:
+    - {start_mm: 355.0, end_mm: 393.0, offset_mm: 10.0, ramp_mm: 8.0}
   # Startup danger check: holes the ROUTE passes close to (route_hole_proximity)
   # that the ball's normal wobble can reach even though the centerline stays out
   # of the capture zone - hole 4 in the U-turn is the canonical case (~4 mm
