@@ -110,14 +110,21 @@ control:
   corner_noise_deg: 12.0
   k_lat: 1.6             # pull toward centerline (per mm of cross-track)
   lat_v_max_mm_s: 18.0
-  # tilt per mm/s of velocity error. Reverted to the cfade8a value (0.012):
-  # that run was far SMOOTHER (median command 0.28, only 5% sign-flips, steady
-  # ~9 mm/s) than the hot k_vel=0.06 + fast-slew regime that thrashed. The ball
-  # still moves because the stall kick supplies the breakaway and the SLOW
-  # command slew (below) holds the tilt across the kick's toggling - that slew
-  # is the real smoothness/hold lever, not a big k_vel. Raise only if, with the
-  # slow slew, the ball genuinely will not move.
-  k_vel: 0.012
+  # --- Velocity PI: perfect-speed-control regime (replaces stall/kick hacks) ---
+  # The ball is a stiction plant (tilt -> acceleration). Pure-P velocity control
+  # commands zero tilt at zero speed error, so the ball stalls and static
+  # friction pins it - which forced the old discrete stall kick / unstick /
+  # stabilize band-aids that launched the ball. Instead: a velocity PI whose
+  # INTEGRAL is the friction/stiction compensator - it ramps the tilt up
+  # smoothly until the ball breaks free, then unwinds as the speed error closes.
+  # k_vel is the P (tracking) gain; k_vel_i is the I (breakaway/hold) gain.
+  # Tuning: with tilt->accel gain C ~ 300 mm/s^2 per unit, k_vel ~ 0.025 and
+  # k_vel_i ~ 0.05 give a roughly critically-damped ~1 s speed loop.
+  k_vel: 0.025
+  k_vel_i: 0.05
+  # Anti-windup: max |command| the integral alone may contribute, so a long
+  # stall cannot wind up into a launch when the ball finally frees.
+  vel_integral_limit: 0.7
   carrot_lookahead_mm: 20
   carrot_min_lookahead_mm: 4.0
   lookahead_mm: 18.0
@@ -132,7 +139,7 @@ control:
   # target, the command is scaled up to at least this magnitude - but only
   # once low speed has PERSISTED (a single slow frame also happens during
   # ordinary braking into a corner, which is not stiction).
-  stall_kick: 0.3
+  stall_kick: 0.0
   # MUST stay below the speed profile's minimum (the runner clamps it if
   # not): planned slow rolling through a hole pass must never be mistaken
   # for a stall, or the kick launches the ball exactly where the plan wants
@@ -187,7 +194,7 @@ control:
   # kick's on/off toggling (which is why cfade8a cleared corners WITHOUT unstick
   # - the held tilt is a sustained push). The 15/s value let the command
   # collapse between twitches, so the ball stuck and thrashed. Keep this slow.
-  command_slew_per_s: 1.5
+  command_slew_per_s: 8
   max_command: 0.9
   # --- Braking authority ---
   # max_command is a gentleness cap for DRIVING. Stopping a fast ball needs
@@ -240,7 +247,7 @@ control:
   # control and NO forward progress; it exits the moment the ball is back under
   # control (speed below exit_speed) for a brief settle, resetting the
   # followers so no stale integral/derivative relaunches the ball.
-  stabilize_enabled: true
+  stabilize_enabled: false
   stabilize_trigger_mult: 3.0             # fire above this x planned speed ...
   stabilize_overspeed_margin_mm_s: 40.0   # ... and above planned + this ...
   stabilize_trigger_speed_mm_s: 55.0      # ... and above this absolute floor
@@ -303,7 +310,7 @@ control:
   # slew, not A*. Caveat: the camera's oblique wall view can make the ball look
   # like it is touching a wall, which can fire false "A* recovery: wall"
   # episodes - watch the status line; if it hijacks the carrot, set false again.
-  recovery_astar_enabled: true
+  recovery_astar_enabled: false
   recovery_astar_grid_mm: 4.0
   recovery_astar_follow_mm: 20.0
   recovery_astar_goal_lookahead_mm: 35.0

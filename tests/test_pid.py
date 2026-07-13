@@ -11,6 +11,56 @@ from cps_maze.control.pid import (
 )
 
 
+def _carrot_pi_cfg(**kw):
+    base = dict(v_max_mm_s=25.0, min_speed_frac=0.55, corner_slow_deg=95.0,
+                k_vel=0.025, k_vel_i=0.05, vel_integral_limit=0.7,
+                max_command=0.9, stall_kick=0.0)
+    base.update(kw)
+    return CarrotVelocityFollowerConfig(**base)
+
+
+def test_carrot_pi_integral_builds_while_below_speed():
+    # A stalled ball (velocity 0, carrot ahead) must see the command GROW frame
+    # over frame as the integral accumulates - the smooth breakaway that
+    # replaces the discrete stall kick.
+    f = CarrotVelocityPathFollower(_carrot_pi_cfg())
+    pos = np.array([0.0, 0.0]); vel = np.array([0.0, 0.0]); carrot = np.array([50.0, 0.0])
+    c1, _ = f.command(pos, vel, carrot, 0.0, dt_s=0.05)
+    for _ in range(8):
+        cN, _ = f.command(pos, vel, carrot, 0.0, dt_s=0.05)
+    assert cN[0] > c1[0] > 0.0          # command grew, points toward carrot (+x)
+    assert abs(cN[1]) < 1e-6            # purely along +x
+
+
+def test_carrot_pi_antiwindup_caps_integral_contribution():
+    f = CarrotVelocityPathFollower(_carrot_pi_cfg())
+    pos = np.array([0.0, 0.0]); vel = np.array([0.0, 0.0]); carrot = np.array([50.0, 0.0])
+    for _ in range(200):               # long stall
+        f.command(pos, vel, carrot, 0.0, dt_s=0.05)
+    contribution = 0.05 * np.linalg.norm(f.integral)   # k_vel_i * |integral|
+    assert contribution <= 0.7 + 1e-6  # bounded by vel_integral_limit -> no launch
+
+
+def test_carrot_pi_reset_clears_integral():
+    f = CarrotVelocityPathFollower(_carrot_pi_cfg())
+    pos = np.array([0.0, 0.0]); vel = np.array([0.0, 0.0]); carrot = np.array([50.0, 0.0])
+    for _ in range(5):
+        f.command(pos, vel, carrot, 0.0, dt_s=0.05)
+    assert np.linalg.norm(f.integral) > 0.0
+    f.reset()
+    assert np.allclose(f.integral, [0.0, 0.0])
+
+
+def test_carrot_pi_no_discrete_kick_when_disabled():
+    # With stall_kick=0 the legacy discrete kick stays dormant (integral does
+    # the work); the kicker never reports a kick.
+    f = CarrotVelocityPathFollower(_carrot_pi_cfg(stall_kick=0.0))
+    pos = np.array([0.0, 0.0]); vel = np.array([0.0, 0.0]); carrot = np.array([50.0, 0.0])
+    for _ in range(20):
+        f.command(pos, vel, carrot, 0.0, dt_s=0.05)
+    assert f.kicker.last_kick == 0.0
+
+
 def test_stall_kicker_ramp_is_capped():
     # A long stall must not ramp the kick without bound: that launches the ball
     # violently into an adjacent hole when it finally breaks free.

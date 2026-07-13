@@ -497,6 +497,8 @@ def main() -> None:
         min_speed_frac=float(config.control.get("min_speed_frac", 0.25)),
         corner_slow_deg=float(config.control.get("corner_slow_deg", 110.0)),
         k_vel=float(config.control.get("k_vel", 0.010)),
+        k_vel_i=float(config.control.get("k_vel_i", 0.0)),
+        vel_integral_limit=float(config.control.get("vel_integral_limit", 0.7)),
         max_command=max_command,
         stall_kick=stall_kick,
         stall_speed_mm_s=stall_speed_mm_s,

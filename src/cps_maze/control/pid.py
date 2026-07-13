@@ -204,6 +204,15 @@ class CarrotVelocityFollowerConfig:
     min_speed_frac: float = 0.25
     corner_slow_deg: float = 110.0
     k_vel: float = 0.010
+    # Integral gain on velocity error. The ball is a stiction plant: pure-P
+    # commands zero tilt at zero velocity error, so the ball stalls and static
+    # friction pins it (which is why the old code needed a discrete stall kick).
+    # The integral ramps the tilt up smoothly until the ball breaks free, then
+    # unwinds as the speed error closes - continuous speed control, no launch.
+    k_vel_i: float = 0.0
+    # Anti-windup: cap the integral's command contribution so a long stall can
+    # never wind up into a full-authority launch when the ball finally frees.
+    vel_integral_limit: float = 0.7
     max_command: float = 0.45
     stall_kick: float = 0.30
     stall_speed_mm_s: float = 8.0
@@ -229,6 +238,7 @@ class CarrotVelocityFollowerConfig:
 class CarrotVelocityPathFollower:
     def __init__(self, config: CarrotVelocityFollowerConfig):
         self.config = config
+        self.integral = np.zeros(2)  # velocity-error integral (stiction comp)
         self.kicker = StallKicker(
             kick=config.stall_kick,
             speed_mm_s=config.stall_speed_mm_s,
@@ -238,6 +248,7 @@ class CarrotVelocityPathFollower:
         )
 
     def reset(self) -> None:
+        self.integral = np.zeros(2)
         self.kicker.reset()
 
     def command(
@@ -266,9 +277,25 @@ class CarrotVelocityPathFollower:
             speed_scale = max(cfg.min_speed_frac, min(corner_scale, extra_speed_scale))
             v_desired = cfg.v_max_mm_s * speed_scale * direction
 
-        raw = cfg.k_vel * (v_desired - velocity_mm_s)
+        # Velocity PI. The P term tracks speed; the integral is the stiction /
+        # friction compensator - it grows while the ball is below the desired
+        # speed (including a dead stall) until the tilt breaks the ball free,
+        # then unwinds as the speed error closes. This is the smooth, continuous
+        # replacement for the discrete stall kick.
+        error = v_desired - velocity_mm_s
+        if dt_s > 0.0:
+            self.integral = self.integral + error * dt_s
+        # anti-windup: bound the integral's command contribution in magnitude
+        i_term = cfg.k_vel_i * self.integral
+        i_mag = float(np.linalg.norm(i_term))
+        if i_mag > cfg.vel_integral_limit and i_mag > 1e-9:
+            self.integral = self.integral * (cfg.vel_integral_limit / i_mag)
+            i_term = cfg.k_vel_i * self.integral
+        raw = cfg.k_vel * error + i_term
 
         speed = float(np.linalg.norm(velocity_mm_s))
+        # Legacy discrete stall kick: dormant when stall_kick <= 0 (the integral
+        # replaces it). Left in place so it can be re-enabled for a stubborn rig.
         kick = self.kicker.update(speed, dt_s)
         v_des_norm = float(np.linalg.norm(v_desired))
         if kick > 0.0 and v_des_norm > cfg.stall_request_speed_mm_s:
