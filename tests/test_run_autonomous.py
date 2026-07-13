@@ -173,3 +173,18 @@ def test_run_logger_accepts_lost_ball_row_with_hole_fields(tmp_path):
     text = log_path.read_text(encoding="utf-8")
     assert "hole_hazard_distance_mm" in text
     assert "hole_speed_cap_mm_s" in text
+
+
+def test_lateral_offset_ramps_and_holds():
+    from scripts.run_autonomous import lateral_offset_at
+    zones = [(100.0, 200.0, 10.0, 20.0)]   # start,end,offset,ramp
+    assert lateral_offset_at(90.0, zones) == 0.0       # before the zone
+    assert lateral_offset_at(110.0, zones) == 5.0      # halfway up the ramp-in
+    assert lateral_offset_at(150.0, zones) == 10.0     # full hold
+    assert lateral_offset_at(190.0, zones) == 5.0      # ramping out
+    assert lateral_offset_at(210.0, zones) == 0.0      # after the zone
+
+
+def test_lateral_offset_empty_zones_is_zero():
+    from scripts.run_autonomous import lateral_offset_at
+    assert lateral_offset_at(150.0, []) == 0.0

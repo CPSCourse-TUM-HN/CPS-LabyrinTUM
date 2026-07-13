@@ -159,6 +159,27 @@ def unstick_bias_command(
     return bias
 
 
+def lateral_offset_at(progress_mm: float,
+                      zones: list[tuple[float, float, float, float]]) -> float:
+    """Smoothed perpendicular target offset at a progress, summed over zones.
+
+    Each zone is (start_mm, end_mm, offset_mm, ramp_mm): the offset ramps 0 ->
+    offset over the first ``ramp_mm``, holds, then ramps back to 0 over the last
+    ``ramp_mm``, so the ball eases ONTO an off-centerline line and back without a
+    jerk. Used to route the ball along the wall AROUND a hole the route grazes
+    (hole 5) and rejoin the path before the next hole. Sign is along the path's
+    left-normal [-tangent_y, tangent_x]; positive pushes to that side.
+    """
+    total = 0.0
+    for start, end, offset, ramp in zones:
+        if offset == 0.0 or not (start <= progress_mm <= end):
+            continue
+        r = max(ramp, 1e-6)
+        f = min((progress_mm - start) / r, (end - progress_mm) / r, 1.0)
+        total += offset * max(0.0, f)
+    return total
+
+
 def load_holes(path: Path) -> np.ndarray:
     """Returns (N, 3) array of x_mm, y_mm, radius_mm; empty if file missing."""
     if not path.exists():
@@ -498,6 +519,12 @@ def main() -> None:
     unstick_progress_frac = float(config.control.get("unstick_progress_frac", 0.35))
     # Reuse the hole slow-band as the "near a hole -> cap unstick gently" radius.
     unstick_hole_band_mm = float(config.control.get("hole_slow_band_mm", 20.0))
+    # Wall-hug detour zones: route the ball along the wall around a grazed hole.
+    lateral_offset_zones = [
+        (float(z["start_mm"]), float(z["end_mm"]),
+         float(z["offset_mm"]), float(z.get("ramp_mm", 8.0)))
+        for z in (config.control.get("lateral_offset_zones", []) or [])
+    ]
     # The runtime wall speed-scale is OFF-route protection only; the speed
     # PROFILE already folds planned wall clearance into the on-route target.
     # Applying the runtime scale on-route double-counts it, and a dense mask
@@ -893,6 +920,18 @@ def main() -> None:
                                     # driving the ball into hole 2)
                                     if cand_off <= max(float(cross), 8.0) + 5.0:
                                         target = candidate
+                        # Wall-hug detour: in configured zones, shift the carrot
+                        # perpendicular to the path so the ball routes along the
+                        # wall AROUND a hole it would otherwise graze (hole 5),
+                        # rejoining the path before the next hole. Ramped, so it
+                        # eases on and off the offset line.
+                        lat_off = lateral_offset_at(progress, lateral_offset_zones)
+                        if abs(lat_off) > 1e-6:
+                            tan = path.tangent_at_progress_mm(progress)
+                            tn = float(np.hypot(tan[0], tan[1]))
+                            if tn > 1e-9:
+                                left_normal = np.array([-tan[1], tan[0]]) / tn
+                                target = target + lat_off * left_normal
                         board_cmd, v_des = carrot_follower.command(
                             state.position_mm, state.velocity_mm_s,
                             target, 0.0, dt_s,
