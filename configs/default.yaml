@@ -227,10 +227,18 @@ control:
   # (the ball is flung into a hole at a corner it can't make, not on a straight).
   # On this route that isolates 3 real spots incl. hole 4's 61 deg U-turn,
   # instead of the 16 holes proximity alone flags.
-  hole_danger_margin_mm: 6.0   # flag if route clears the capture zone by < this
-  hole_danger_turn_deg: 40.0   # ...and turns at least this much at the closest point
+  # Flagged for EITHER reason (both confirmed against run logs):
+  #  - touch: route grazes the hole (clears capture by < touch_mm) -> ANY
+  #    overspeed drops it in, turn or not (hole 5 fell here at 210 mm/s straight).
+  #  - corner: close AND a sharp turn (hole 4's U-turn overshoot).
+  hole_danger_touch_mm: 2.5    # "route nearly grazes the hole" -> crawl regardless of turn
+  hole_danger_margin_mm: 6.0   # corner rule: flag if route clears capture by < this
+  hole_danger_turn_deg: 40.0   # corner rule: ...and turns at least this much
   hole_danger_pass_mm_s: 8.0   # crawl speed through a flagged danger pass
   hole_danger_band_mm: 18.0    # apply the crawl within this much of the closest point
+  # Explicit extra holes to crawl (by index), for a hole that keeps failing but
+  # the auto-check misses. e.g. [11, 3]. Empty = rely on the auto-detection.
+  hole_danger_indices: []
   # Velocity smoothing time constant (seconds). FRAME-RATE INVARIANT: the
   # estimator uses an effective per-frame factor dt/(tau+dt), so the real-time
   # smoothing is the same at 10 fps or 120 fps. This matters a lot: velocity is

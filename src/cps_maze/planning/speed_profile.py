@@ -64,6 +64,7 @@ def route_hole_proximity(
     margin_mm: float,
     danger_margin_mm: float = 6.0,
     danger_turn_deg: float = 40.0,
+    touch_mm: float = 2.5,
     corner_span_mm: float = 15.0,
     corner_noise_deg: float = 12.0,
     step_mm: float = 2.0,
@@ -71,17 +72,19 @@ def route_hole_proximity(
     """Startup check: which holes is the ball actually at risk of falling into?
 
     On a dense board the route threads within the ball's wobble range of MOST
-    holes, so proximity alone flags almost everything. The real fall risk is a
-    hole the route passes close to AND at a sharp TURN: there the ball, carrying
-    too much speed, cannot make the corner and is flung into the hole sitting in
-    the crook - exactly hole 4's U-turn. So a hole is flagged only when BOTH:
+    holes, so proximity alone flags almost everything. Two situations are the
+    real fall risk, confirmed against run logs, and a hole is flagged for either:
 
-      * the route's closest approach clears the capture zone (hole radius + ball
-        radius + margin) by less than ``danger_margin_mm``, and
-      * the route turns at least ``danger_turn_deg`` at that closest point.
+      * TOUCH - the route's closest approach clears the capture zone (hole radius
+        + ball radius + margin) by less than ``touch_mm``. The route nearly
+        grazes the hole, so ANY overspeed drops the ball in, turn or not
+        (observed: hole 5 fell here at 210 mm/s on a straight).
+      * CORNER - clearance under ``danger_margin_mm`` AND the route turns at
+        least ``danger_turn_deg`` at the closest point: the ball can't make the
+        corner and is flung into the hole in the crook (hole 4's U-turn).
 
     Returns dicts {hole_index, progress_mm, center_dist_mm, clearance_mm,
-    turn_deg}, least clearance first.
+    turn_deg, reason}, least clearance first.
     """
     holes = np.asarray(holes, dtype=float).reshape(-1, 3)
     if not len(holes):
@@ -99,13 +102,19 @@ def route_hole_proximity(
         clearance = center_dist - (hr + ball_radius_mm + margin_mm)
         turn = float(path.heading_change_deg(
             float(progs[j]), span_mm=corner_span_mm, noise_deg=corner_noise_deg))
-        if clearance <= danger_margin_mm and turn >= danger_turn_deg:
+        reason = None
+        if clearance <= touch_mm:
+            reason = "touch"
+        elif clearance <= danger_margin_mm and turn >= danger_turn_deg:
+            reason = "corner"
+        if reason is not None:
             out.append({
                 "hole_index": hi,
                 "progress_mm": float(progs[j]),
                 "center_dist_mm": center_dist,
                 "clearance_mm": clearance,
                 "turn_deg": turn,
+                "reason": reason,
             })
     out.sort(key=lambda s: s["clearance_mm"])
     return out

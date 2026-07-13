@@ -445,6 +445,7 @@ def main() -> None:
     # the operator and crawl the plan through each such pass.
     danger_margin_mm = float(config.control.get("hole_danger_margin_mm", 6.0))
     danger_turn_deg = float(config.control.get("hole_danger_turn_deg", 40.0))
+    danger_touch_mm = float(config.control.get("hole_danger_touch_mm", 2.5))
     danger_pass_mm_s = float(config.control.get("hole_danger_pass_mm_s", 8.0))
     danger_band_mm = float(config.control.get("hole_danger_band_mm", 18.0))
     danger_spots = route_hole_proximity(
@@ -453,16 +454,37 @@ def main() -> None:
         margin_mm=float(config.control.get("hole_margin_mm", 2.0)),
         danger_margin_mm=danger_margin_mm,
         danger_turn_deg=danger_turn_deg,
+        touch_mm=danger_touch_mm,
         corner_span_mm=corner_span_mm,
         corner_noise_deg=corner_noise_deg,
     )
+    # Explicit override: hole indices to always crawl (from run analysis, for a
+    # hole that keeps failing but the auto-check misses). Deduped against auto.
+    forced = [int(i) for i in config.control.get("hole_danger_indices", []) or []]
+    auto_idx = {sp["hole_index"] for sp in danger_spots}
+    for hi in forced:
+        if hi in auto_idx or not (0 <= hi < len(holes)):
+            continue
+        # find where the route is closest to this hole
+        hx, hy = holes[hi][0], holes[hi][1]
+        best_p, best_d = 0.0, float("inf")
+        for s in np.arange(0.0, float(path.cumulative_lengths[-1]), 2.0):
+            p = path.point_at_progress_mm(float(s))
+            d = float(np.hypot(p[0] - hx, p[1] - hy))
+            if d < best_d:
+                best_d, best_p = d, float(s)
+        danger_spots.append({"hole_index": hi, "progress_mm": best_p,
+                             "center_dist_mm": best_d,
+                             "clearance_mm": best_d - (float(config.control.get("ball_radius_mm", 4.0))
+                                                       + float(config.control.get("hole_margin_mm", 2.0))
+                                                       + float(holes[hi][2])),
+                             "turn_deg": 0.0, "reason": "forced"})
     if danger_spots:
-        print(f"!! {len(danger_spots)} high-risk hole(s): route passes close AT A "
-              f"SHARP TURN (overshoot risk) - crawling the plan to "
+        print(f"!! {len(danger_spots)} high-risk hole(s) - crawling the plan to "
               f"{danger_pass_mm_s:.0f} mm/s within {danger_band_mm:.0f} mm of each:")
-        for sp in danger_spots:
-            print(f"     hole idx{sp['hole_index']} @ progress {sp['progress_mm']:.0f}mm: "
-                  f"{sp['center_dist_mm']:.1f}mm from center "
+        for sp in sorted(danger_spots, key=lambda s: s["progress_mm"]):
+            print(f"     hole idx{sp['hole_index']} @ progress {sp['progress_mm']:.0f}mm "
+                  f"[{sp['reason']}]: {sp['center_dist_mm']:.1f}mm from center "
                   f"({sp['clearance_mm']:+.1f}mm clear), turn {sp['turn_deg']:.0f} deg")
     danger_zones = [(sp["progress_mm"], danger_band_mm, danger_pass_mm_s)
                     for sp in danger_spots]

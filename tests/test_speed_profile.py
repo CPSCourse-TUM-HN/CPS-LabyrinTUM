@@ -92,19 +92,32 @@ def test_route_hole_proximity_flags_close_hole_at_a_turn():
     import numpy as np
     from cps_maze.planning.path import WaypointPath
     from cps_maze.planning.speed_profile import route_hole_proximity
-    # route: straight in +x to (30,0), then a 90 deg turn to +y. A hole beside
-    # the +x leg has its closest approach on the straight; the turn is caught
-    # only when it lies AHEAD within the corner span (like hole 4's U-turn).
-    pts = np.array([[0, 0], [30, 0], [30, 30]], dtype=float)
+    # route: straight in +x to (40,0), then a 90 deg turn to +y. Holes sit
+    # BELOW the +x leg (so the vertical leg isn't the closest), both ~4 mm clear
+    # (outside the touch threshold), differing only in whether the turn is AHEAD.
+    pts = np.array([[0, 0], [40, 0], [40, 20]], dtype=float)
     path = WaypointPath(pts)
-    holes = np.array([[10.0, 7.0, 3.0],    # far before the turn -> no turn ahead
-                      [20.0, 7.0, 3.0]])    # just before the turn -> turn ahead
+    holes = np.array([[10.0, -13.0, 3.0],   # far before the turn -> no turn ahead
+                      [25.0, -13.0, 3.0]])   # just before the turn -> turn ahead
     spots = route_hole_proximity(path, holes, ball_radius_mm=4.0, margin_mm=2.0,
                                  danger_margin_mm=6.0, danger_turn_deg=40.0,
-                                 corner_span_mm=15.0)
-    flagged = {s["hole_index"] for s in spots}
-    assert 1 in flagged            # close + turn ahead -> danger
-    assert 0 not in flagged        # close but no turn ahead -> not flagged
+                                 touch_mm=2.5, corner_span_mm=15.0)
+    flagged = {s["hole_index"]: s["reason"] for s in spots}
+    assert flagged.get(1) == "corner"   # close + turn ahead -> corner danger
+    assert 0 not in flagged             # close but no turn, not touching -> safe
+
+
+def test_route_hole_proximity_touch_rule_ignores_turn():
+    import numpy as np
+    from cps_maze.planning.path import WaypointPath
+    from cps_maze.planning.speed_profile import route_hole_proximity
+    # a hole the route nearly grazes on a dead-straight leg must be flagged
+    # (touch) even with zero turn - this is hole 5's case (fell at 210 mm/s).
+    path = WaypointPath(np.array([[0, 0], [100, 0]], dtype=float))
+    holes = np.array([[50.0, 9.5, 3.0]])   # 9.5 mm from center; capture 9 -> +0.5 clear
+    spots = route_hole_proximity(path, holes, ball_radius_mm=4.0, margin_mm=2.0,
+                                 touch_mm=2.5)
+    assert len(spots) == 1 and spots[0]["reason"] == "touch"
 
 
 def test_route_hole_proximity_none_when_no_holes():
