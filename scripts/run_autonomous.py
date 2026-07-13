@@ -68,7 +68,7 @@ RUN_LOG_FIELDS = [
     "cross_track_mm", "turn_deg", "wall_speed_scale", "hole_brake",
     "wall_distance_mm", "target_speed_mm_s",
     "hole_hazard_distance_mm", "hole_speed_cap_mm_s",
-    "wall_escape_x", "wall_escape_y",
+    "wall_escape_x", "wall_escape_y", "wall_lean_x", "wall_lean_y",
     "board_cmd_x", "board_cmd_y", "yaw_command", "pitch_command",
     "stall_kick",
 ]
@@ -178,6 +178,46 @@ def lateral_offset_at(progress_mm: float,
         f = min((progress_mm - start) / r, (end - progress_mm) / r, 1.0)
         total += offset * max(0.0, f)
     return total
+
+
+def zone_factor(progress_mm: float, start: float, end: float, ramp: float) -> float:
+    if not (start <= progress_mm <= end):
+        return 0.0
+    r = max(float(ramp), 1e-6)
+    return max(0.0, min((progress_mm - start) / r,
+                        (end - progress_mm) / r, 1.0))
+
+
+def wall_lean_command(
+    progress_mm: float,
+    path: WaypointPath,
+    velocity_mm_s: np.ndarray,
+    zones: list[tuple[float, float, float, float, float, float, float]],
+) -> np.ndarray:
+    """One-sided damped bias along the path normal, used to lean on a wall.
+
+    Each zone is (start, end, side, command, damping, max_command, ramp).  side
+    is +1 for the path left-normal and -1 for the right-normal.  The damping is
+    one-sided: motion already leaning into the wall reduces the bias to zero,
+    but never reverses it toward the hole.
+    """
+    out = np.zeros(2)
+    for start, end, side, command, damping, max_command, ramp in zones:
+        f = zone_factor(progress_mm, start, end, ramp)
+        if f <= 0.0 or command <= 0.0:
+            continue
+        tangent = path.tangent_at_progress_mm(progress_mm)
+        normal = np.array([-tangent[1], tangent[0]], dtype=float)
+        n = float(np.linalg.norm(normal))
+        if n < 1e-9:
+            continue
+        direction = float(side) * normal / n
+        v_along = float(np.dot(velocity_mm_s, direction))
+        magnitude = max(0.0, float(command) - float(damping) * v_along)
+        if max_command > 0.0:
+            magnitude = min(magnitude, float(max_command))
+        out += f * magnitude * direction
+    return out
 
 
 def load_holes(path: Path) -> np.ndarray:
@@ -525,6 +565,22 @@ def main() -> None:
          float(z["offset_mm"]), float(z.get("ramp_mm", 8.0)))
         for z in (config.control.get("lateral_offset_zones", []) or [])
     ]
+    wall_lean_zones = []
+    for z in (config.control.get("wall_lean_zones", []) or []):
+        raw_side = z.get("side", "left")
+        if isinstance(raw_side, str):
+            side = -1.0 if raw_side.lower() == "right" else 1.0
+        else:
+            side = float(raw_side)
+        wall_lean_zones.append((
+            float(z["start_mm"]),
+            float(z["end_mm"]),
+            side,
+            float(z.get("command", 0.0)),
+            float(z.get("damping", 0.0)),
+            float(z.get("max_command", z.get("command", 0.0))),
+            float(z.get("ramp_mm", 8.0)),
+        ))
     # The runtime wall speed-scale is OFF-route protection only; the speed
     # PROFILE already folds planned wall clearance into the on-route target.
     # Applying the runtime scale on-route double-counts it, and a dense mask
@@ -989,6 +1045,7 @@ def main() -> None:
                                                      state.velocity_mm_s,
                                                      target, dt_s)
                     wall_escape = np.zeros(2)
+                    wall_lean = np.zeros(2)
                     if (wall_map is not None
                             and wall_escape_command > 0.0
                             and wall_distance <= wall_escape_distance_mm
@@ -1019,6 +1076,12 @@ def main() -> None:
                         hole_brake = "emergency"
                         board_cmd = ((-brake_max_command / speed_now)
                                      * state.velocity_mm_s)
+
+                    if wall_lean_zones:
+                        wall_lean = wall_lean_command(
+                            progress, path, state.velocity_mm_s, wall_lean_zones)
+                        if float(np.linalg.norm(wall_lean)) > 1e-9:
+                            board_cmd = board_cmd + wall_lean
 
                     # Composure state machine: enter on a genuine runaway,
                     # hold position and damp, resume the moment control is back.
@@ -1163,6 +1226,8 @@ def main() -> None:
                         status += f"  KICK {stall_kick_now:.2f}"
                     if float(np.linalg.norm(wall_escape)) > 1e-9:
                         status += "  wall escape"
+                    if float(np.linalg.norm(wall_lean)) > 1e-9:
+                        status += "  wall lean"
                     if recovery_reason:
                         status += f"  A* recovery:{recovery_reason}"
 
@@ -1183,6 +1248,7 @@ def main() -> None:
                         "wall_distance_mm": wall_distance,
                         "target_speed_mm_s": target_speed,
                         "wall_escape_x": wall_escape[0], "wall_escape_y": wall_escape[1],
+                        "wall_lean_x": wall_lean[0], "wall_lean_y": wall_lean[1],
                         "board_cmd_x": board_cmd[0], "board_cmd_y": board_cmd[1],
                         "yaw_command": servo_cmd[0], "pitch_command": servo_cmd[1],
                         "stall_kick": stall_kick_now,
@@ -1221,6 +1287,7 @@ def main() -> None:
                         "hole_hazard_distance_mm": "",
                         "hole_speed_cap_mm_s": "",
                         "wall_escape_x": "", "wall_escape_y": "",
+                        "wall_lean_x": "", "wall_lean_y": "",
                         "board_cmd_x": "", "board_cmd_y": "",
                         "yaw_command": 0.0, "pitch_command": 0.0,
                     })

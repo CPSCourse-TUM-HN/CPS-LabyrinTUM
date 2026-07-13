@@ -261,6 +261,7 @@ class RunVisualizer:
         desired = np.array([f(row, "desired_vx_mm_s"), f(row, "desired_vy_mm_s")])
         board_cmd = np.array([f(row, "board_cmd_x"), f(row, "board_cmd_y")])
         wall_escape = np.array([f(row, "wall_escape_x"), f(row, "wall_escape_y")])
+        wall_lean = np.array([f(row, "wall_lean_x"), f(row, "wall_lean_y")])
         speed = float(np.linalg.norm(vel))
         cmd_mag = float(np.hypot(f(row, "yaw_command"), f(row, "pitch_command")))
         wall_scale = f(row, "wall_speed_scale", 1.0)
@@ -305,6 +306,8 @@ class RunVisualizer:
             draw_arrow_mm(img, self.homography, ball, board_cmd, (0, 140, 255), "cmd", 20.0)
             draw_arrow_mm(img, self.homography, ball, wall_escape,
                           (255, 0, 255), "wall escape", 30.0)
+            draw_arrow_mm(img, self.homography, ball, wall_lean,
+                          (0, 255, 180), "wall lean", 30.0)
 
         if row.get("wall_distance_mm", "") not in ("", None):
             wall_d = f(row, "wall_distance_mm")
@@ -333,6 +336,8 @@ class RunVisualizer:
             reasons.append("STALLED: command present but speed < 8mm/s")
         if float(np.linalg.norm(wall_escape)) > 1e-9:
             reasons.append(f"wall escape command {np.linalg.norm(wall_escape):.2f}")
+        if float(np.linalg.norm(wall_lean)) > 1e-9:
+            reasons.append(f"wall lean command {np.linalg.norm(wall_lean):.2f}")
         if not reasons:
             reasons.append("no active slowdown/brake flag")
 
